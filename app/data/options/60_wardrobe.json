@@ -1,0 +1,44 @@
+{
+  "groups": [
+    {
+      "id": "outfit",
+      "label": "Wardrobe",
+      "kind": "multi",
+      "field": "outfit",
+      "order": 90,
+      "section": "Wardrobe",
+      "options": [
+        { "id": "casual", "label": "Casual", "prompt": "casual clothing" },
+        { "id": "formal", "label": "Formal", "prompt": "formal attire" },
+        { "id": "fantasy_armor", "label": "Fantasy Armor", "prompt": "ornate fantasy armor", "tags": ["fantasy"] },
+        { "id": "robes", "label": "Robes", "prompt": "flowing robes", "tags": ["fantasy"] },
+        { "id": "leather", "label": "Leather", "prompt": "leather outfit" },
+        { "id": "gown", "label": "Gown", "prompt": "elegant gown" },
+        { "id": "uniform", "label": "Uniform", "prompt": "military uniform" },
+        { "id": "bodysuit", "label": "Bodysuit", "prompt": "sleek bodysuit", "tags": ["scifi"] },
+        { "id": "streetwear", "label": "Streetwear", "prompt": "modern streetwear" },
+        { "id": "lingerie", "label": "Lingerie", "prompt": "lingerie" },
+        { "id": "swimwear", "label": "Swimwear", "prompt": "swimwear" },
+        { "id": "nude", "label": "Nude", "prompt": "nude" }
+      ]
+    },
+    {
+      "id": "style",
+      "label": "Aesthetic",
+      "kind": "tags",
+      "field": "style",
+      "order": 91,
+      "section": "Wardrobe",
+      "options": [
+        { "id": "elegant", "label": "Elegant", "prompt": "elegant aesthetic" },
+        { "id": "gothic", "label": "Gothic", "prompt": "gothic aesthetic" },
+        { "id": "punk", "label": "Punk", "prompt": "punk aesthetic" },
+        { "id": "cyberpunk", "label": "Cyberpunk", "prompt": "cyberpunk aesthetic", "tags": ["scifi"] },
+        { "id": "regal", "label": "Regal", "prompt": "regal aesthetic" },
+        { "id": "rustic", "label": "Rustic", "prompt": "rustic aesthetic" },
+        { "id": "ethereal", "label": "Ethereal", "prompt": "ethereal aesthetic" },
+        { "id": "minimalist", "label": "Minimalist", "prompt": "minimalist aesthetic" }
+      ]
+    }
+  ]
+}

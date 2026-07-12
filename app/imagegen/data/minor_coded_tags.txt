@@ -1,0 +1,28 @@
+# Layer-2 image content classifier — minor-coded booru tag block set
+# (Stage 3c; DECISIONS.md §11 layer 2; CONTENT_POLICY P1).
+#
+# The pixel-side counterpart to the Layer-1 prompt filter: a clean adult-anchored
+# prompt can still RENDER a minor-appearing face, which no deterministic prompt
+# check can see. The WD14 tagger runs over generated pixels; any tag here that
+# fires (above the classifier's confidence threshold) HARD-BLOCKS the frame —
+# it is deleted, audited (filter_block layer=2), and never shown or trained on.
+#
+# One tag per line; '#' comments and blank lines ignored. Editable tuning
+# surface (like app/safety/data/*.txt). Errs toward blocking (CONTENT_POLICY
+# §1.4). This is defense-in-depth on a stylized medium that renders adults with
+# neotenous features — never a guarantee (the §11 honest bar); its real
+# precision/recall tunes on hardware against the actual checkpoint.
+loli
+shota
+toddler
+baby
+child
+infant
+kindergarten_uniform
+aged_down
+younger
+child's_drawing
+onesie
+diaper
+pacifier
+teething

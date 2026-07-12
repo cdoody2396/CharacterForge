@@ -1,0 +1,23 @@
+{
+  "groups": [
+    {
+      "id": "age",
+      "label": "Age",
+      "kind": "number",
+      "field": "age",
+      "order": 1,
+      "min": 20,
+      "max": 10000,
+      "step": 1,
+      "default": 25,
+      "unit": "years",
+      "prompt_ranges": [
+        { "max": 24, "prompt": "young adult" },
+        { "min": 25, "max": 39, "prompt": "adult" },
+        { "min": 40, "max": 59, "prompt": "mature adult" },
+        { "min": 60, "max": 120, "prompt": "elderly" },
+        { "min": 121, "prompt": "ageless, ancient being" }
+      ]
+    }
+  ]
+}

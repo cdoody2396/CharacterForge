@@ -1,0 +1,66 @@
+{
+  "groups": [
+    {
+      "id": "disposition",
+      "label": "Core Disposition",
+      "kind": "single",
+      "field": "disposition",
+      "order": 80,
+      "section": "Personality",
+      "render": false,
+      "options": [
+        { "id": "warm", "label": "Warm", "prompt": "warm and affectionate" },
+        { "id": "reserved", "label": "Reserved", "prompt": "reserved and guarded" },
+        { "id": "playful", "label": "Playful", "prompt": "playful and teasing" },
+        { "id": "stoic", "label": "Stoic", "prompt": "stoic and composed" },
+        { "id": "fiery", "label": "Fiery", "prompt": "fiery and passionate" },
+        { "id": "gentle", "label": "Gentle", "prompt": "gentle and nurturing" },
+        { "id": "mischievous", "label": "Mischievous", "prompt": "mischievous" },
+        { "id": "commanding", "label": "Commanding", "prompt": "commanding and dominant" },
+        { "id": "submissive", "label": "Submissive", "prompt": "soft-spoken and yielding" }
+      ]
+    },
+    {
+      "id": "traits",
+      "label": "Personality Traits",
+      "kind": "tags",
+      "field": "traits",
+      "order": 81,
+      "section": "Personality",
+      "render": false,
+      "options": [
+        { "id": "confident", "label": "Confident", "prompt": "confident" },
+        { "id": "shy", "label": "Shy", "prompt": "shy" },
+        { "id": "witty", "label": "Witty", "prompt": "witty" },
+        { "id": "loyal", "label": "Loyal", "prompt": "loyal" },
+        { "id": "ambitious", "label": "Ambitious", "prompt": "ambitious" },
+        { "id": "curious", "label": "Curious", "prompt": "curious" },
+        { "id": "protective", "label": "Protective", "prompt": "protective" },
+        { "id": "cynical", "label": "Cynical", "prompt": "cynical" },
+        { "id": "romantic", "label": "Romantic", "prompt": "hopeless romantic" },
+        { "id": "adventurous", "label": "Adventurous", "prompt": "adventurous" },
+        { "id": "intellectual", "label": "Intellectual", "prompt": "intellectual" },
+        { "id": "flirtatious", "label": "Flirtatious", "prompt": "flirtatious" },
+        { "id": "brooding", "label": "Brooding", "prompt": "brooding" },
+        { "id": "optimistic", "label": "Optimistic", "prompt": "optimistic" }
+      ]
+    },
+    {
+      "id": "voice",
+      "label": "Voice",
+      "kind": "single",
+      "field": "voice",
+      "order": 82,
+      "section": "Personality",
+      "render": false,
+      "options": [
+        { "id": "soft", "label": "Soft", "prompt": "soft-spoken" },
+        { "id": "sultry", "label": "Sultry", "prompt": "sultry voice" },
+        { "id": "bright", "label": "Bright", "prompt": "bright, energetic voice" },
+        { "id": "deep", "label": "Deep", "prompt": "deep voice" },
+        { "id": "raspy", "label": "Raspy", "prompt": "raspy voice" },
+        { "id": "melodic", "label": "Melodic", "prompt": "melodic voice" }
+      ]
+    }
+  ]
+}

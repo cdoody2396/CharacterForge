@@ -1,0 +1,88 @@
+{
+  "groups": [
+    {
+      "id": "skin_tone",
+      "label": "Skin Tone",
+      "kind": "single",
+      "field": "skin_tone",
+      "order": 20,
+      "section": "Appearance",
+      "quick": true,
+      "options": [
+        { "id": "porcelain", "label": "Porcelain", "prompt": "porcelain skin", "color": "#f6e6e0" },
+        { "id": "fair", "label": "Fair", "prompt": "fair skin", "color": "#f2d6c4" },
+        { "id": "olive", "label": "Olive", "prompt": "olive skin", "color": "#d8b98e" },
+        { "id": "tan", "label": "Tan", "prompt": "tan skin", "color": "#c99b6f" },
+        { "id": "brown", "label": "Brown", "prompt": "brown skin", "color": "#a3714b" },
+        { "id": "dark", "label": "Dark", "prompt": "dark skin", "color": "#7c4f33" },
+        { "id": "ebony", "label": "Ebony", "prompt": "deep ebony skin", "color": "#503222" },
+        { "id": "blue", "label": "Blue", "prompt": "blue skin", "tags": ["nonhuman"], "color": "#7d9bd4" },
+        { "id": "green", "label": "Green", "prompt": "green skin", "tags": ["nonhuman"], "color": "#8fae6f" },
+        { "id": "grey", "label": "Ashen Grey", "prompt": "ashen grey skin", "tags": ["nonhuman"], "color": "#9aa0a6" }
+      ]
+    },
+    {
+      "id": "hair_color",
+      "label": "Hair Color",
+      "kind": "single",
+      "field": "hair_color",
+      "order": 21,
+      "section": "Appearance",
+      "quick": true,
+      "options": [
+        { "id": "black", "label": "Black", "prompt": "black hair", "color": "#1b1b1f" },
+        { "id": "brown", "label": "Brown", "prompt": "brown hair", "color": "#5b3a24" },
+        { "id": "blonde", "label": "Blonde", "prompt": "blonde hair", "color": "#e8c56a" },
+        { "id": "red", "label": "Red", "prompt": "red hair", "color": "#b6392c" },
+        { "id": "auburn", "label": "Auburn", "prompt": "auburn hair", "color": "#8c3b23" },
+        { "id": "white", "label": "White", "prompt": "white hair", "color": "#f2f2f2" },
+        { "id": "silver", "label": "Silver", "prompt": "silver hair", "color": "#c9ccd4" },
+        { "id": "pink", "label": "Pink", "prompt": "pink hair", "color": "#e88ab8" },
+        { "id": "blue", "label": "Blue", "prompt": "blue hair", "color": "#4f74d8" },
+        { "id": "green", "label": "Green", "prompt": "green hair", "color": "#4d9e6a" },
+        { "id": "purple", "label": "Purple", "prompt": "purple hair", "color": "#8858c8" }
+      ]
+    },
+    {
+      "id": "hair_style",
+      "label": "Hair Style",
+      "kind": "single",
+      "field": "hair_style",
+      "order": 22,
+      "section": "Appearance",
+      "quick": true,
+      "options": [
+        { "id": "short", "label": "Short", "prompt": "short hair" },
+        { "id": "bob", "label": "Bob", "prompt": "bob cut" },
+        { "id": "shoulder", "label": "Shoulder-length", "prompt": "shoulder-length hair" },
+        { "id": "long", "label": "Long", "prompt": "long hair" },
+        { "id": "very_long", "label": "Very Long", "prompt": "very long flowing hair" },
+        { "id": "ponytail", "label": "Ponytail", "prompt": "hair in a ponytail" },
+        { "id": "braided", "label": "Braided", "prompt": "braided hair" },
+        { "id": "buzzed", "label": "Buzzed", "prompt": "buzzed hair" },
+        { "id": "shaved", "label": "Shaved", "prompt": "shaved head" }
+      ]
+    },
+    {
+      "id": "eye_color",
+      "label": "Eye Color",
+      "kind": "single",
+      "field": "eye_color",
+      "order": 23,
+      "section": "Appearance",
+      "quick": true,
+      "options": [
+        { "id": "brown", "label": "Brown", "prompt": "brown eyes", "color": "#6b4226" },
+        { "id": "hazel", "label": "Hazel", "prompt": "hazel eyes", "color": "#9a7a3f" },
+        { "id": "green", "label": "Green", "prompt": "green eyes", "color": "#4e8d57" },
+        { "id": "blue", "label": "Blue", "prompt": "blue eyes", "color": "#4d7fd0" },
+        { "id": "grey", "label": "Grey", "prompt": "grey eyes", "color": "#8e97a3" },
+        { "id": "amber", "label": "Amber", "prompt": "amber eyes", "color": "#c98a2e" },
+        { "id": "violet", "label": "Violet", "prompt": "violet eyes", "color": "#8a5fc8" },
+        { "id": "red", "label": "Red", "prompt": "red eyes", "tags": ["nonhuman"], "color": "#c03434" },
+        { "id": "gold", "label": "Gold", "prompt": "golden eyes", "tags": ["nonhuman"], "color": "#d8a62f" },
+        { "id": "heterochromia", "label": "Heterochromia", "prompt": "heterochromia, two different eye colors" }
+      ]
+    }
+  ]
+}

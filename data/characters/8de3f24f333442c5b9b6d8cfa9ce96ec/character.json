@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "8de3f24f333442c5b9b6d8cfa9ce96ec",
+  "name": "Sara",
+  "age": 25,
+  "selections": {
+    "race": "human",
+    "gender_presentation": "feminine",
+    "skin_tone": "fair",
+    "hair_color": "black",
+    "hair_style": "ponytail",
+    "eye_color": "green",
+    "body_type": "athletic"
+  },
+  "tags": {},
+  "sliders": {},
+  "free_text": {},
+  "identity": {
+    "has_lora": false,
+    "reference_image_path": null,
+    "lora_path": null,
+    "footprint": {
+      "lora_bytes": 0,
+      "catalog_bytes": 0,
+      "cache_bytes": 0
+    }
+  },
+  "created_at": "2026-07-12T16:03:57+00:00",
+  "updated_at": "2026-07-12T16:03:57+00:00"
+}

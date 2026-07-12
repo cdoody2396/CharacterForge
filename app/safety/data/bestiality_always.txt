@@ -1,0 +1,21 @@
+# Category: bestiality — blocked in EVERY context (Layer 1).
+# The line is sapience, not species: humanoid/sapient fantasy beings are
+# permitted content; non-sapient animals are not (see CONTENT_POLICY.md).
+# Note: bare "mount" is deliberately NOT blocked — "mounted her horse" is
+# ordinary equestrian phrasing in this genre; sexual framing is caught by the
+# verb/"sex with" regexes below.
+bestiality
+beastiality
+zoophilia
+zoophile
+zoophiles
+zoosexual
+zoosexuals
+zoo porn
+animal sex
+# "sex with a (feral) horse" — up to two intervening adjectives before the
+# animal noun.
+re:\bsex(?:ual)?\s+with\s+(?:a|an|the|his|her|my|your|its)?\s*(?:[a-z]+\s+){0,2}(?:dogs?|horses?|animals?|cats?|wol(?:f|ves)|pigs?|goats?|mares?|stallions?|hounds?|ponies|pony|donkeys?|mules?|bulls?|oxen|beasts?)\b
+# explicit sexual verb + animal (all inflections, optional adjectives).
+# "mount" is excluded on purpose — equestrian "mounts the mare" dominates.
+re:\b(?:fuck(?:s|ing|ed)?|screw(?:s|ing|ed)?|penetrat(?:e|es|ing|ed)|copulat(?:e|es|ing|ed)\s+with)\s+(?:a|an|the|his|her|my|your|its)?\s*(?:[a-z]+\s+){0,2}(?:dogs?|horses?|animals?|cats?|wol(?:f|ves)|pigs?|goats?|mares?|stallions?|hounds?|ponies|pony|donkeys?|mules?|bulls?|beasts?)\b

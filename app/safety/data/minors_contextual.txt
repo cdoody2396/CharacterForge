@@ -1,0 +1,65 @@
+# Category: minors — CONTEXTUAL terms (Layer 1).
+# Blocked outright in image-prompt context. In free-text/chat contexts,
+# blocked only within proximity of sexual vocabulary (sexual_context.txt) —
+# so "grew up with two kids next door" passes in a backstory while
+# "naked teen" blocks. Not applied to names. Literal terms only; hyphen /
+# concatenation variants ("school-girl", "highschool") fold automatically.
+child
+children
+kid
+kids
+kiddo
+kiddos
+infant
+infants
+toddler
+toddlers
+baby girl
+baby boy
+teen
+teens
+teenager
+teenagers
+teenage
+teenaged
+adolescent
+adolescents
+juvenile
+juveniles
+minors
+youngster
+youngsters
+schoolgirl
+schoolgirls
+schoolboy
+schoolboys
+school girl
+school boy
+school uniform
+little girl
+little girls
+little boy
+little boys
+young girl
+young girls
+young boy
+young boys
+middle school
+middle schooler
+elementary school
+grade school
+grade schooler
+kindergarten
+kindergartner
+kindergartener
+kindergarteners
+high school
+high schooler
+playground
+daycare
+classroom
+chalkboard
+blackboard
+school desk
+school hallway
+school classroom

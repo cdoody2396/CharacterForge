@@ -1,0 +1,16 @@
+# Category: medical/legal advice extraction — blocked in EVERY context.
+# Starter set (Stage 0). This category targets the USER extracting real
+# medical/legal guidance through the app; it expands substantially at
+# Stage 6 when chat-side gating lands.
+medical advice
+legal advice
+re:\bis\s+it\s+legal\s+to\b
+re:\bcan\s+i\s+(?:sue|get\s+arrested\s+for)\b
+re:\bshould\s+i\s+sue\b
+re:\bwhat\s+(?:dose|dosage)\b
+re:\bhow\s+(?:much|many)\s+(?:mg|milligrams?|pills?)\b
+re:\bprescribe\s+me\b
+re:\bwhat\s+medication\s+should\b
+re:\bwhat\s+should\s+i\s+take\s+for\b
+re:\bdiagnose\s+(?:me|my)\b
+re:\bdo\s+i\s+have\s+(?:cancer|a\s+tumor|an?\s+std|an?\s+sti)\b

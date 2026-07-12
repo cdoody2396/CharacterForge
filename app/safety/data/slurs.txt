@@ -1,0 +1,81 @@
+# Category: slurs — blocked in EVERY context, including names (Layer 1).
+# Deterministic slur-block per DECISIONS.md §10/§11. This list is deliberately
+# strict and includes entries with known false-positive surface ("fag" UK
+# slang, "dyke" in surnames, "coon"/"jap" as name fragments) — Layer 1 errs
+# toward blocking and this file is the tuning surface. Hyphen/concatenation
+# and plural variants fold automatically for multi-word entries; single-word
+# plurals are listed explicitly.
+nigger
+niggers
+nigga
+niggas
+negro
+negros
+negroes
+faggot
+faggots
+fag
+fags
+kike
+kikes
+spic
+spics
+chink
+chinks
+gook
+gooks
+wetback
+wetbacks
+beaner
+beaners
+raghead
+ragheads
+towelhead
+towelheads
+zipperhead
+zipperheads
+porch monkey
+porch monkeys
+sand nigger
+sand niggers
+tranny
+trannies
+trannys
+shemale
+shemales
+retard
+retards
+retarded
+coon
+coons
+darkie
+darkies
+darky
+paki
+pakis
+jap
+japs
+wop
+wops
+dago
+dagos
+dagoes
+squaw
+squaws
+redskin
+redskins
+injun
+injuns
+half-breed
+halfbreed
+half breed
+half-breeds
+halfbreeds
+half breeds
+dyke
+dykes
+# --- Masked-vowel forms of the highest-severity slurs ---------------------
+re:\bn[\W_]gg?er\b
+re:\bn[\W_]gg?a\b
+re:\bf[\W_]gg?ot\b
+re:\bk[\W_]ke\b

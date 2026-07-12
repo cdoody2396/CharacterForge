@@ -1,0 +1,50 @@
+# Category: non-consent — CONTEXTUAL terms (Layer 1).
+# Blocked outright in image-prompt context; in free-text/chat only within
+# proximity of sexual vocabulary. "Forced to flee her homeland" passes;
+# "forced her onto the bed and..." blocks. Known accepted false positive:
+# consensual-BDSM phrasing like "forced orgasm" — see CONTENT_POLICY.md.
+# Literal terms only.
+forced
+forces
+forcing
+forcibly
+unwilling
+unwillingly
+unconscious
+passed out
+passes out
+passing out
+drugged
+drugging
+drugs her
+sedated
+sedate
+sedates
+sedating
+chloroform
+chloroformed
+chloroforms
+chloroforming
+hypnotized
+hypnotised
+hypnotize
+hypnotizes
+hypnotizing
+hypnosis
+mind control
+mind controlled
+mind controlling
+mind controls
+brainwash
+brainwashed
+brainwashes
+brainwashing
+blackmail
+blackmailed
+blackmails
+blackmailing
+coerce
+coerced
+coerces
+coercing
+coercion

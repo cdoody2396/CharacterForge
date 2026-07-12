@@ -1,0 +1,31 @@
+# Layer-2 safety negatives (DECISIONS.md §11 layer 2; CONTENT_POLICY P1/R7/R8).
+# These steer generation AWAY from the vocabulary below — every image prompt
+# carries them in its NEGATIVE prompt. They are prohibited terms on purpose:
+# this file is exempt from the Layer-1 gate because its content never enters
+# a positive prompt (see app/imagegen/prompt.py). Editable tuning surface.
+#
+# Scope: the under-20 category (the structural one) — age-coded presentation
+# and school-coded settings. Deliberately NOT included: adult body-type
+# vocabulary ("petite", "flat chest") that legitimate 20+ options share —
+# steering those away would fight permitted §12 anatomy choices.
+child
+loli
+shota
+toddler
+infant
+baby
+teenager
+teen
+underage
+minor
+young child
+little girl
+little boy
+child-like face
+childlike proportions
+school uniform
+schoolgirl
+schoolboy
+elementary school
+classroom
+playground

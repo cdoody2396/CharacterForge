@@ -1,0 +1,84 @@
+# Category: minors — blocked in EVERY context (Layer 1).
+# All characters are 20+ (DECISIONS.md §1, §11). This list also enforces the
+# age line in text: any age assertion under 20 blocks anywhere, including
+# backstory ("when she was 15..."). Non-age childhood references ("as a
+# child") are handled by minors_contextual.txt instead.
+# Format: literal terms (joiner/spread/doubled matched, obfuscation-folded)
+# or re: regexes (digit-bearing ones run on digit-preserving text).
+loli
+lolis
+lolicon
+lolicons
+shota
+shotas
+shotacon
+shotacons
+toddlercon
+toddlercons
+jailbait
+underage
+underaged
+minor-attracted
+pedo
+pedos
+pedophile
+pedophiles
+pedophilia
+paedo
+paedos
+paedophile
+paedophiles
+paedophilia
+child porn
+child pornography
+childporn
+kiddie porn
+kiddy porn
+child abuse material
+csam
+csem
+preteen
+preteens
+tween
+tweens
+barely legal
+ageplay
+age-play
+age regression
+age-regression
+ddlg
+# --- Masked-vowel forms of the highest-severity terms ---------------------
+re:\bl[\W_]li\b
+re:\bp[\W_]do\b
+re:\bp[\W_]edo\b
+# --- Age assertions under 20 (the 20+ line is absolute) -------------------
+# All keep a leading \b so they cannot match inside a longer number
+# ("111-year-old" stays permitted). Numeric "15 years old", "15-year-old",
+# "9 yr old", "15yo", "15 y.o.", "15 y/o", "15 yrs", "19.0 years old".
+re:\b(?:1[0-9]|[1-9])(?:\.\d+)?\s*-?\s*(?:y(?:ea)?a?rs?\s*-?\s*old|y\s*[./-]?\s*o\b|yrs?\b)
+# "age 15", "age:15", "age: 15", "aged 16"
+re:\bage[:,]?\s*(?:1[0-9]|[1-9])\b
+re:\baged\s+(?:1[0-9]|[1-9])\b
+# "age fifteen" / "aged fifteen" (written)
+re:\bage[d]?[:,]?\s*(?:(?:thir|four|fif|six|seven|eigh|nine)teen|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b
+# "just turned 18", "turning 16" (numeric + written)
+re:\bturn(?:ed|s|ing)?\s+(?:1[0-9]|[1-9])\b
+re:\bturn(?:ed|s|ing)?\s+(?:(?:thir|four|fif|six|seven|eigh|nine)teen|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b
+# "under 18", "under-20" (numeric, excluding measurements/durations)
+re:\bunder\s*-?\s*(?:1[0-9]|20)\b(?!\s*(?:min(?:ute)?s?|sec(?:ond)?s?|hours?|days?|weeks?|months?|%|percent|kg|g|lbs?|pounds?|km|mi(?:les)?|meters?|metres?|feet|ft|inches|dollars|bucks))
+# "under eighteen", "under twenty" (written)
+re:\bunder\s+(?:(?:thir|four|fif|six|seven|eigh|nine)teen|ten|eleven|twelve|twenty)\b
+# ordinal birthday under 20: "her 16th birthday"
+re:\b(?:1[0-9]|[1-9])(?:st|nd|rd|th)\s+b(?:irth)?day\b
+# age range beginning under 20: "18-25 years old", "19 to 21 years old"
+re:\b(?:1[0-9]|[1-9])\s*(?:-|–|to)\s*\d{1,3}\s*-?\s*y(?:ea)?rs?\s*-?\s*old\b
+# copula teen-age: "she is 15", "when she was 15", "im 17". Limited to the
+# 10-19 range and singular personal copulas to avoid counting false positives
+# ("there are 5 guards", "is 1 of many"); measurement units are excluded, and
+# sub-ten bare ages are still caught by the "N years old"/"N yo" rules.
+re:\b(?:is|was|i'?m|im|only)\s+1[0-9]\b(?!\s*(?:%|percent|foot|feet|ft|inch|inches|cm|mm|meters?|metres?|min|mins|minute|minutes|sec|secs|second|seconds|hour|hours|hr|hrs|day|days|week|weeks|month|months|year|years|yr|yrs|kg|kgs|lb|lbs|pound|pounds|dollar|dollars|buck|bucks|degrees?|o'?clock|am|pm|times?|mile|miles|km))
+# written teen ages with years-old or y/o suffix
+re:\b(?:thir|four|fif|six|seven|eigh|nine)teen\s*-?\s*(?:y(?:ea)?rs?\s*-?\s*old|y\s*[./-]?\s*o\b)
+# one-twelve word ages, with tens-prefix suppressed so "twenty-two years
+# old" and "thirty-five years old" (adult) are NOT falsely blocked.
+re:(?<!twenty[- ])(?<!thirty[- ])(?<!forty[- ])(?<!fifty[- ])(?<!sixty[- ])(?<!seventy[- ])(?<!eighty[- ])(?<!ninety[- ])\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*-?\s*(?:y(?:ea)?rs?\s*-?\s*old|y\s*[./-]?\s*o\b)

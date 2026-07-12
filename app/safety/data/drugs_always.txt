@@ -1,0 +1,39 @@
+# Category: drugs — blocked in EVERY context (Layer 1).
+# Prohibited category per DECISIONS.md §11. Hard-drug terms block flat,
+# including narrative mentions (flagged ruling — see CONTENT_POLICY.md).
+# Alcohol and tobacco are permitted and not listed. Cannabis blocked by
+# default pending policy approval. "weed", "molly", "acid", "bath salts"
+# deliberately omitted (false-positive-heavy); Layer 2 covers them.
+# Hyphen/concatenation variants ("crystal-meth", "angeldust") fold
+# automatically.
+meth
+crystal meth
+methamphetamine
+methamphetamines
+heroin
+cocaine
+crack cocaine
+fentanyl
+carfentanil
+opium
+oxycontin
+oxycontins
+oxycodone
+percocet
+percocets
+vicodin
+xanax
+mdma
+lsd
+psilocybin
+ketamine
+pcp
+angel dust
+krokodil
+cannabis
+marijuana
+narcotic
+narcotics
+re:\bhow\s+to\s+(?:make|cook|synthesi[sz]e|manufacture|obtain|buy|score)\s+(?:drugs|dope)\b
+re:\bdrug\s+(?:deal(?:er|ing)?|traffick(?:er|ing))\b
+re:\bget(?:ting)?\s+high\s+on\b

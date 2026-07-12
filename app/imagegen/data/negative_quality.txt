@@ -1,0 +1,23 @@
+# Quality negatives — appended to every negative prompt (Stage 3a).
+# Standard Illustrious/booru-family defect steer. One fragment per line;
+# '#' comments and blank lines ignored. Editable tuning surface.
+worst quality
+low quality
+lowres
+jpeg artifacts
+signature
+watermark
+username
+artist name
+blurry
+bad anatomy
+bad hands
+extra digits
+fewer digits
+extra limbs
+missing limbs
+malformed hands
+long neck
+mutated
+deformed
+cross-eyed

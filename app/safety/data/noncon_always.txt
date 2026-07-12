@@ -1,0 +1,47 @@
+# Category: non-consent — blocked in EVERY context (Layer 1).
+# Consent must be unambiguous (DECISIONS.md §11). CNC/dubcon roleplay framing
+# is prohibited by default pending the content-policy approval — see
+# docs/CONTENT_POLICY.md flagged rulings.
+rape
+rapes
+raped
+raping
+rapist
+rapists
+molest
+molests
+molested
+molesting
+molestation
+molestations
+molester
+molesters
+noncon
+nonconsensual
+nonconsensually
+non-consensual
+non-consensually
+nonconsent
+non-consent
+dubcon
+dubious consent
+cnc
+somnophilia
+somnophile
+somnophiles
+date rape
+daterape
+roofie
+roofies
+roofied
+rohypnol
+sexual assault
+sexual assaults
+sexually assault
+sexually assaulted
+sexually assaulting
+# --- Masked-vowel forms of the highest-severity term ----------------------
+re:\br[\W_]pe\b
+re:\br[\W_]ped\b
+re:\bagainst\s+(?:her|his|their|my|your)\s+will\b
+re:\bwhether\s+(?:she|he|they)\s+want(?:s|ed)?\s+(?:it|to)\s+or\s+not\b

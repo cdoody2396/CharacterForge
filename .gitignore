@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/settings.json
+data/settings.json.*
+data/logs/
+# User-placed model weights (SDXL checkpoint, buffalo_l, inswapper, matting
+# model, …). Large + partly non-commercial-licensed — never committed; each
+# is pointed at by a models.image.* settings key (relative paths resolve here).
+models/

@@ -1,0 +1,105 @@
+# Sexual-vocabulary list (Layer 1). NOT a blocklist — these terms are
+# permitted adult content on their own. They exist to arm the proximity
+# check: a contextual term (minors_contextual, noncon_contextual) within
+# PROXIMITY_WINDOW characters of any term here blocks. Literal terms only.
+#
+# Deliberately EXCLUDED as proximity anchors (too dual-use — they tripped
+# minors proximity on innocent text like "a virgin forest where the children
+# play" and "an intimate dinner while the kids slept"): virgin, virginity,
+# intimate, intimacy, seduce/seduction. Explicit anatomy/act words below are
+# unambiguous enough to anchor proximity.
+sex
+sexual
+sexually
+sexy
+fuck
+fucks
+fucked
+fucking
+cock
+cocks
+dick
+dicks
+pussy
+pussies
+cunt
+cum
+cums
+cumming
+naked
+nude
+nudes
+nudity
+breasts
+boobs
+tits
+titties
+nipple
+nipples
+penis
+vagina
+anal
+oral
+blowjob
+handjob
+orgasm
+orgasms
+orgasmic
+erotic
+erotica
+horny
+aroused
+arousal
+arousing
+masturbate
+masturbates
+masturbated
+masturbating
+masturbation
+penetrate
+penetrates
+penetrated
+penetrating
+penetration
+thrust
+thrusts
+thrusting
+moan
+moans
+moaning
+moaned
+panties
+undress
+undresses
+undressed
+undressing
+grope
+gropes
+groped
+groping
+lewd
+nsfw
+hentai
+porn
+porno
+pornographic
+pornography
+deepthroat
+creampie
+bukkake
+gangbang
+threesome
+foursome
+orgy
+bdsm
+kink
+kinky
+fetish
+dildo
+vibrator
+strapon
+lingerie
+topless
+slut
+slutty
+whore

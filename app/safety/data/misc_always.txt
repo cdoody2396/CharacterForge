@@ -1,0 +1,16 @@
+# Category: misc prohibited — blocked in EVERY context (Layer 1).
+# "The general set of things AI normally safeguards against"
+# (DECISIONS.md §11) where a deterministic keyword line exists.
+# Incest is prohibited by default pending policy approval — see
+# CONTENT_POLICY.md flagged rulings. Hyphen/concatenation variants
+# ("snuff-film", "snufffilm") fold automatically.
+incest
+incestuous
+necrophilia
+necrophile
+necrophiles
+necrophiliac
+necrophiliacs
+snuff film
+snuff films
+re:\bhow\s+to\s+(?:make|build)\s+(?:a\s+)?(?:bomb|pipe\s+bomb|explosive)s?\b

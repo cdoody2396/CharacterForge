@@ -1,0 +1,39 @@
+# Category: self-harm / suicide — blocked in EVERY context (Layer 1).
+# Blocks intent, instruction, and identity phrasing across pronouns and
+# tenses. Bare narrative words ("suicide mission", "a scar from darker
+# years") are left to Layer 2 — see CONTENT_POLICY.md flagged rulings.
+suicidal
+self-injury
+self injury
+kms
+kys
+starve myself
+starving myself
+anorexia
+anorexic
+bulimia
+bulimic
+pro-ana
+proana
+pro-mia
+promia
+thinspo
+thinspiration
+# self-harm and its inflections (self-harm / self harm / selfharm(+ing/ed/s))
+re:\bself[\s-]?harm(?:s|ed|ing)?\b
+# cut/harm/hurt/starve + reflexive pronoun (all persons/tenses)
+re:\b(?:cut|cuts|cutting|harm|harms|harmed|harming|hurt|hurts|hurting|starve|starves|starving|starved)\s+(?:my|your|him|her|them|it|one)sel(?:f|ves)\b
+# commit/attempt suicide
+re:\b(?:commit|commits|committed|committing|attempt|attempts|attempted|attempting)\s+suicide\b
+# kill/off oneself (all pronouns)
+re:\bkill(?:s|ed|ing)?\s+(?:my|your|him|her|them|it|one)sel(?:f|ves)\b
+# take/end one's (own) life (all pronouns/tenses)
+re:\b(?:take|takes|took|taking)\s+(?:my|your|his|her|its|their|one'?s)\s+(?:own\s+)?life\b
+re:\bend(?:s|ed|ing)?\s+(?:my|your|his|her|its|their|one'?s)\s+(?:own\s+)?life\b
+re:\bend(?:ed|ing)?\s+(?:my|your)\s+(?:own\s+)?life\b
+# wanting to die / better off dead
+re:\bwant(?:s|ed)?\s+to\s+die\b
+re:\bbetter\s+off\s+dead\b
+# how-to self-destruction / suicide artefacts
+re:\bhow\s+to\s+(?:die|hang\s+(?:my|your)self|overdose)\b
+re:\bsuicide\s+(?:method|note|pact|plan)s?\b

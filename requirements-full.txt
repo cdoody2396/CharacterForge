@@ -1,0 +1,76 @@
+# Later-stage (GPU/model) dependencies. Install ON THE TARGET MACHINE only —
+# the build sandbox has no GPU and never installs these. Uncommented lines
+# are the current stage's slice; commented lines are the forward manifest,
+# uncommented (with pins chosen against then-current releases) at their stage.
+#
+# --- Stage 3a — base generation (ACTIVE — install on the 16 GB target) ------
+# torch: install the CUDA build FIRST, from the PyTorch index, e.g.:
+#   pip install "torch>=2.4" --index-url https://download.pytorch.org/whl/cu124
+# (pick the cuXXX tag matching the machine's driver; a plain `pip install
+#  torch` pulls the CPU wheel on Windows and the engine will refuse to run).
+torch>=2.4
+diffusers>=0.31
+transformers>=4.44
+accelerate>=0.33
+safetensors>=0.4
+pillow>=10.0
+#
+# --- Stage 3b — IP-Adapter baseline identity (ACTIVE) ------------------------
+# No new pins: the 3a slice (torch/diffusers>=0.31/transformers/accelerate/
+# safetensors/pillow) already covers pipe.load_ip_adapter + the ViT-H CLIP
+# vision encoder + PIL. 3b's new artifacts are USER-PLACED files, like the
+# checkpoint: a local h94/IP-Adapter mirror (sdxl_models/ip-adapter_sdxl_vit-h
+# .safetensors + models/image_encoder/) pointed to by models.image.ip_adapter.
+#
+# --- Stage 3c — identity bootstrap + auto-filter (ACTIVE) --------------------
+# Face-embedding cull + optional face-swap + the Layer-2 pixel content
+# classifier + anime aesthetic rank. All run on ONNX (no extra torch) AFTER
+# the SDXL model is unloaded; CPU providers by default (zero VRAM).
+insightface>=0.7.3        # buffalo_l ArcFace embeddings + inswapper face-swap
+onnxruntime>=1.17         # CPU provider (swap to onnxruntime-gpu to share the GPU)
+dghs-imgutils>=0.5        # anime_dbaesthetic + WD14 tagger + dbrating + nudenet
+opencv-contrib-python>=4.9  # required by imgutils; the ONLY cv2 (do NOT also install opencv-python)
+# insightface builds a Cython extension on Windows — a known-good prebuilt
+# wheel may be needed. Model WEIGHTS are USER-PLACED (like the checkpoint):
+#   models.image.face_recognition_dir   -> <dir>/models/buffalo_l/*.onnx
+#   models.image.content_classifier_dir -> imgutils HF cache (tagger/rating/nudenet/aesthetic)
+#   models.image.face_swapper_path      -> inswapper_128.onnx  (OPTIONAL)
+# NOTE: inswapper_128 and buffalo_l are research/NON-COMMERCIAL licensed — fine
+# for this offline personal build; never redistributed with the packaged app.
+#
+# --- Stage 3d — LoRA promotion (ACTIVE) ------------------------------------
+# No new pip pins: training runs as a headless SUBPROCESS into a user-placed
+# kohya-ss/sd-scripts checkout (its own deps), pointed at by
+# models.image.lora_trainer_dir (+ optional lora_trainer_python for its env).
+# The app builds the dataset + config and invokes sdxl_train_network.py; the
+# 3a torch/diffusers slice covers the app side. sd-scripts is swappable for a
+# diffusers/peft loop by replacing lora._default_trainer_factory.
+#   models.image.lora_trainer_dir    -> a kohya sd-scripts checkout
+#   models.image.lora_trainer_python -> interpreter for its env (None = app's)
+#
+# --- Stage 3f — matting / keyable output (ACTIVE) ----------------------------
+# No new pip pins: matting is a direct-ONNX reimplementation of rembg's ISNet/
+# BiRefNet pre/post-processing (~30 lines, MIT reference code, attributed in
+# app/imagegen/matte.py) on the ALREADY-INSTALLED onnxruntime + pillow slice
+# (numpy arrives transitively; matte.py imports it lazily).
+# rembg is NOT installed: its old opencv-python-headless dep is gone (fixed
+# upstream ~2.0.72), but it still hard-depends on pymatting/scikit-image/scipy,
+# floors numpy>=2.3 and pillow>=12.1, forces onnxruntime>=1.23.2 via its [cpu]
+# extra, and ships a runtime model downloader (pooch) — none needed here.
+# transparent-background is NOT installed: hard dep on opencv-python (a SECOND
+# cv2 distribution — forbidden beside opencv-contrib-python) plus a
+# torch/timm/kornia/albumentations/gdown stack.
+# Model WEIGHTS are USER-PLACED (like the checkpoint):
+#   models.image.matting_model_path -> isnet-anime.onnx  (default variant)
+#     https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-anime.onnx
+#     (~176 MB, md5 6f184e756bb3bd901c8849220a83e38e; Apache-2.0 provenance,
+#     SkyTNT/anime-segmentation)
+#   variants (image_gen.matting.variant): isnet-general-use.onnx (md5
+#     fc16ebd8b0c10d971d3513d564d01e29) | BiRefNet ONNX assets from the same
+#     rembg v0.0.0 release (~973 MB general / ~214 MB lite; CPU is seconds-per-
+#     frame — prefer GPU providers after image_engine_release, or the lite file).
+#
+# --- Stage 6 — chat loop ----------------------------------------------------
+# llama-cpp-python      # mid-class quantized LLM (≈12–24B GGUF)
+# sentence-transformers # RAG embeddings (6b)
+# numpy

@@ -1,0 +1,5 @@
+# Stage 0 runtime + test dependencies.
+# Later-stage (GPU/model) dependencies live in requirements-full.txt and are
+# installed at their own stage — do not install them before they are needed.
+pywebview>=5.1
+pytest>=8.0

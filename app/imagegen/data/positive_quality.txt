@@ -1,0 +1,9 @@
+# Positive quality preamble — prepended to every image prompt (Stage 3a).
+# Tuned for Illustrious-XL-family checkpoints (booru-tag conditioned; see
+# docs/IMAGE_PIPELINE.md). One fragment per line; '#' comments and blank
+# lines ignored. Editable tuning surface — like app/safety/data, changes
+# take effect on next launch.
+masterpiece
+best quality
+very aesthetic
+absurdres

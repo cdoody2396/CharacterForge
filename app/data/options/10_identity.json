@@ -1,0 +1,64 @@
+{
+  "groups": [
+    {
+      "id": "race",
+      "label": "Race",
+      "kind": "single",
+      "field": "race",
+      "order": 10,
+      "section": "Identity",
+      "quick": true,
+      "options": [
+        { "id": "human", "label": "Human", "prompt": "human" },
+        { "id": "elf", "label": "Elf", "prompt": "elf, pointed ears", "tags": ["fantasy"] },
+        { "id": "half_elf", "label": "Half-Elf", "prompt": "half-elf, subtly pointed ears", "tags": ["fantasy"] },
+        { "id": "dwarf", "label": "Dwarf", "prompt": "dwarf, stocky build", "tags": ["fantasy"] },
+        { "id": "orc", "label": "Orc", "prompt": "orc, tusks, green skin", "tags": ["fantasy"] },
+        { "id": "tiefling", "label": "Tiefling", "prompt": "tiefling, horns, tail", "tags": ["fantasy"] },
+        { "id": "demon", "label": "Demon", "prompt": "demon, horns, otherworldly features", "tags": ["fantasy", "nonhuman"] },
+        { "id": "angel", "label": "Angel", "prompt": "angelic being, feathered wings, halo", "tags": ["fantasy", "nonhuman"] },
+        { "id": "catfolk", "label": "Catfolk", "prompt": "catfolk, feline ears and tail", "tags": ["fantasy", "nonhuman"] },
+        { "id": "android", "label": "Android", "prompt": "android, synthetic features, subtle seams", "tags": ["scifi", "nonhuman"] },
+        { "id": "cyborg", "label": "Cyborg", "prompt": "cyborg, cybernetic augmentations", "tags": ["scifi"] },
+        { "id": "alien", "label": "Alien", "prompt": "humanoid alien, exotic skin", "tags": ["scifi", "nonhuman"] },
+        { "id": "dragonkin", "label": "Dragonkin", "prompt": "dragonkin, scales, draconic features", "tags": ["fantasy", "nonhuman"] }
+      ]
+    },
+    {
+      "id": "archetype",
+      "label": "Archetype",
+      "kind": "tags",
+      "field": "archetype",
+      "order": 11,
+      "section": "Identity",
+      "options": [
+        { "id": "warrior", "label": "Warrior", "prompt": "warrior" },
+        { "id": "mage", "label": "Mage", "prompt": "mage, arcane" },
+        { "id": "rogue", "label": "Rogue", "prompt": "rogue, roguish" },
+        { "id": "healer", "label": "Healer", "prompt": "healer" },
+        { "id": "noble", "label": "Noble", "prompt": "noble, refined" },
+        { "id": "outlaw", "label": "Outlaw", "prompt": "outlaw, rugged" },
+        { "id": "scholar", "label": "Scholar", "prompt": "scholar, bookish" },
+        { "id": "pilot", "label": "Pilot", "prompt": "pilot, flight gear", "tags": ["scifi"] },
+        { "id": "hacker", "label": "Hacker", "prompt": "hacker, neon tech", "tags": ["scifi"] },
+        { "id": "courtesan", "label": "Courtesan", "prompt": "courtesan, alluring" }
+      ]
+    },
+    {
+      "id": "gender_presentation",
+      "label": "Gender Presentation",
+      "kind": "single",
+      "field": "gender_presentation",
+      "order": 12,
+      "section": "Identity",
+      "quick": true,
+      "render": false,
+      "_render_note": "The image-prompt subject anchor (solo, 1girl/1boy/1other) is derived from this field in code (prompt.py); emitting the option fragment too would double the token.",
+      "options": [
+        { "id": "feminine", "label": "Feminine", "prompt": "feminine" },
+        { "id": "masculine", "label": "Masculine", "prompt": "masculine" },
+        { "id": "androgynous", "label": "Androgynous", "prompt": "androgynous" }
+      ]
+    }
+  ]
+}
