@@ -259,18 +259,21 @@ def test_coerce_cull_config_clamps_batch(tmp_path):
 
 
 def test_preflight_reports_missing_models(tmp_path):
+    # Post-embedder-swap contract (2026-07-12): the classifier dir witnesses
+    # everything the CCIP identity path needs (all imgutils HF-cache models);
+    # buffalo_l + inswapper are required ONLY when the face-swap is on.
     s = Settings(tmp_path / "s.json")
-    assert preflight_cull(s, need_swap=False) == "face_models_missing"
+    assert preflight_cull(s, need_swap=False) == "classifier_unavailable"
+    cc = tmp_path / "cc"
+    cc.mkdir()
+    s.set("models.image.content_classifier_dir", str(cc))
+    assert preflight_cull(s, need_swap=False) is None  # no buffalo_l needed
+    assert preflight_cull(s, need_swap=True) == "face_models_missing"
     fr = tmp_path / "fr"
     (fr / "models" / "buffalo_l").mkdir(parents=True)
     (fr / "models" / "buffalo_l" / "det_10g.onnx").write_bytes(b"\0")
     (fr / "models" / "buffalo_l" / "w600k_r50.onnx").write_bytes(b"\0")
     s.set("models.image.face_recognition_dir", str(fr))
-    assert preflight_cull(s, need_swap=False) == "classifier_unavailable"
-    cc = tmp_path / "cc"
-    cc.mkdir()
-    s.set("models.image.content_classifier_dir", str(cc))
-    assert preflight_cull(s, need_swap=False) is None
     assert preflight_cull(s, need_swap=True) == "swap_model_missing"
     sw = tmp_path / "inswapper.onnx"
     sw.write_bytes(b"\0")
@@ -360,3 +363,46 @@ def test_store_bootstrap_paths_reject_crafted_ids(tmp_path):
     for bad in ("../evil", "a/b", ".."):
         with pytest.raises((InvalidId, ValueError)):
             store.bootstrap_dir(bad)
+
+
+def test_pin_hf_cache_points_process_cache_at_classifier_dir(tmp_path, settings,
+                                                             monkeypatch):
+    # Hardware-validation catch: content_classifier_dir was a preflight
+    # witness only — imgutils reads the HF cache via HF_HOME, which freezes
+    # at the first huggingface_hub import (the engine's, in the normal
+    # flow). pin_hf_cache runs at startup and makes the setting REAL.
+    import os
+
+    from app.imagegen.cull import pin_hf_cache
+
+    monkeypatch.delenv("HF_HOME", raising=False)
+    pin_hf_cache(settings)  # setting unset -> env untouched (fail-closed later)
+    assert "HF_HOME" not in os.environ
+
+    cc = tmp_path / "classifier_cache"
+    cc.mkdir()
+    settings.set("models.image.content_classifier_dir", str(cc))
+    monkeypatch.setenv("HF_HOME", "somewhere-else")
+    pin_hf_cache(settings)  # the app setting is authoritative for the process
+    assert os.environ["HF_HOME"] == str(cc)
+
+
+def test_detector_threshold_mirrors_configured_floor(settings):
+    # Hardware-validation catch (2026-07-12): insightface's own prepare()
+    # default (det_thresh=0.5) silently dropped faces BEFORE the configured
+    # det_score_floor ever saw them — any floor tuned below 0.5 was a dead
+    # knob (photo-trained buffalo_l reads clean anime faces in the 0.2-0.5
+    # band). The detector threshold must MIRROR the configured floor,
+    # [0,1]-clamped at the use site (prepare() consumes it; the coercion
+    # only finite-guards).
+    from app.imagegen.cull import detector_threshold
+
+    assert detector_threshold(settings) == 0.5  # the checked-in default
+    settings.set("image_gen.bootstrap.det_score_floor", 0.2)
+    assert detector_threshold(settings) == 0.2
+    settings.set("image_gen.bootstrap.det_score_floor", -3)
+    assert detector_threshold(settings) == 0.0  # clamped for prepare()
+    settings.set("image_gen.bootstrap.det_score_floor", 7.5)
+    assert detector_threshold(settings) == 1.0
+    settings.set("image_gen.bootstrap.det_score_floor", "garbage")
+    assert detector_threshold(settings) == 0.5  # coercion default (degrade)

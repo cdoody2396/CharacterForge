@@ -85,6 +85,47 @@ DEFAULT_IP_ADAPTER_SCALE = 0.55
 DEFAULT_LORA_SCALE = 1.0
 MAX_LORA_SCALE = 2.0
 
+# Hardware-measured (2026-07-12, RTX 4070 Super 12 GB): the fully-resident
+# identity stack (SDXL fp16 ~6.6 GB + ViT-H encoder + adapter ~1.9 GB) peaks
+# 12.2-12.3 GB at 832x1216 with the fp32-upcast VAE decode — past a 12 GB
+# card's budget, where the Windows (WDDM) driver silently spills to system
+# RAM and roughly halves throughput (18.6 s/frame vs 9.7 base). Below this
+# total-VRAM floor the identity backend uses accelerate model-cpu-offload
+# (peak ~= largest single component) instead of a resident `.to("cuda")`.
+IDENTITY_RESIDENT_VRAM_MIN_GB = 14.0
+
+
+def identity_needs_cpu_offload(total_vram_bytes: object) -> bool:
+    """True when the card cannot hold the fully-resident identity stack
+    without WDDM spill (pure; the [HARDWARE] backend calls it with the CUDA
+    device's total memory)."""
+    try:
+        total = float(total_vram_bytes)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False  # unknown -> keep the default resident path
+    return total < IDENTITY_RESIDENT_VRAM_MIN_GB * (1 << 30)
+
+
+def pin_hf_offline(settings: Any) -> None:
+    """Pin the process's Hugging Face posture OFFLINE at app startup when the
+    §2 offline configuration is complete (a local ``pipeline_config_dir`` is
+    set). MUST run before any heavy import: huggingface_hub freezes
+    ``HF_HUB_OFFLINE`` at import time, and the normal flow's first heavy
+    import is the BASE backend's — which predates the 3b identity-backend
+    offline gate — so an env set at identity/cull build time is silently
+    ineffective in a process warmed by a base render (hardware-validation
+    catch, 2026-07-12: a bootstrap cull's cached-model resolutions made live
+    etag requests even with every model local). Hard-set, not setdefault:
+    the app setting is authoritative. With the config dir unset the hub
+    stays reachable for the documented one-time config warm (§1); the
+    backend-level setdefaults remain as backstops for direct construction."""
+    import os
+
+    raw = settings.get("models.image.pipeline_config_dir")
+    if raw is not None and str(raw).strip():
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 
 class EngineUnavailable(RuntimeError):
     """Generation cannot run here/now: missing deps, GPU, or checkpoint."""
@@ -371,13 +412,13 @@ class _DiffusersIPAdapterSDXLBackend:
             kwargs["config"] = str(config_dir)
             kwargs["local_files_only"] = True
         pipe = StableDiffusionXLPipeline.from_single_file(str(checkpoint), **kwargs)
-        pipe.to("cuda")
-        pipe.enable_vae_slicing()
         pipe.set_progress_bar_config(disable=True)
         # Load the IP-Adapter + its ViT-H image encoder. image_encoder_folder is
         # the pinned slash-form (repo-root -> ViT-H) — see the module constant
         # comment; local_files_only is ALWAYS on (the adapter + encoder are
-        # user-placed local files, never fetched — §2).
+        # user-placed local files, never fetched — §2). Loaded BEFORE the
+        # device placement below (diffusers' documented order for the offload
+        # path; `.to("cuda")` moves the adapter + encoder along with the pipe).
         try:
             pipe.load_ip_adapter(
                 str(ip_config.dir),
@@ -390,6 +431,17 @@ class _DiffusersIPAdapterSDXLBackend:
             raise EngineUnavailable(
                 f"failed to load the IP-Adapter ({ip_config.variant}): {exc}"
             ) from exc
+        if identity_needs_cpu_offload(
+            torch.cuda.get_device_properties(0).total_memory
+        ):
+            # 12 GB-class card (see the module constant): a resident stack
+            # spills WDDM and halves throughput; offload keeps the peak at
+            # ~the largest single component for a few seconds of PCIe
+            # transfer per render (§3: slow is fine, spill-thrash is not).
+            pipe.enable_model_cpu_offload()
+        else:
+            pipe.to("cuda")
+        pipe.enable_vae_slicing()
         self._pipe = pipe
         self._sampler_applied: str | None = None
         self._scale_applied: float | None = None

@@ -1587,7 +1587,8 @@ def test_bootstrap_preflight_missing_models(creator, settings, audit, fake_engin
     service = bootstrap_service(creator, settings, audit, fake_engine, factory)
     record = _ready(service, creator, settings, ip_adapter_dir)
     res = service.bootstrap_generate(record.id, batch=4)
-    assert res["ok"] is False and res["kind"] == "face_models_missing"
+    # post-embedder-swap: the first missing witness is the classifier dir
+    assert res["ok"] is False and res["kind"] == "classifier_unavailable"
     assert factory.built == 0
     assert not creator.store.candidates_dir(record.id).exists()
 
@@ -2471,7 +2472,8 @@ def test_generate_catalog_cull_models_missing(creator, settings, audit, fake_eng
     service = bootstrap_service(creator, settings, audit, fake_engine, factory)
     record = _catalog_ready(creator)
     res = service.generate_catalog(record.id)  # no cull_models fixture
-    assert res["ok"] is False and res["kind"] == "face_models_missing"
+    # post-embedder-swap: the first missing witness is the classifier dir
+    assert res["ok"] is False and res["kind"] == "classifier_unavailable"
     assert factory.built == 0
 
 
@@ -2672,3 +2674,51 @@ def test_catalog_finalize_double_fault_drops_dangling_manifest(creator, settings
     assert settings.get("models.active") is None
     # prior frames remain recoverable in catalog.old
     assert (creator.store.char_dir(record.id) / "catalog.old").exists()
+
+
+def test_identity_needs_cpu_offload_thresholds():
+    # Hardware-validation catch (2026-07-12, RTX 4070 Super 12 GB): the
+    # fully-resident identity stack peaks ~12.2-12.3 GB and WDDM-spills on a
+    # 12 GB card (~2x slower). Below the floor the backend must pick
+    # model-cpu-offload; at/above it, the resident path. Garbage total ->
+    # the default resident path (degrade, never crash).
+    from app.imagegen.engine import (
+        IDENTITY_RESIDENT_VRAM_MIN_GB,
+        identity_needs_cpu_offload,
+    )
+
+    gib = 1 << 30
+    assert identity_needs_cpu_offload(12 * gib) is True
+    assert identity_needs_cpu_offload(int(IDENTITY_RESIDENT_VRAM_MIN_GB * gib) - 1) is True
+    assert identity_needs_cpu_offload(int(IDENTITY_RESIDENT_VRAM_MIN_GB * gib)) is False
+    assert identity_needs_cpu_offload(16 * gib) is False
+    assert identity_needs_cpu_offload(None) is False
+    assert identity_needs_cpu_offload("garbage") is False
+
+
+def test_pin_hf_offline_gated_on_pipeline_config_dir(settings, monkeypatch):
+    # Hardware-validation catch (2026-07-12): huggingface_hub freezes
+    # HF_HUB_OFFLINE at import, and the normal flow's first heavy import is
+    # the BASE backend's (which predates the 3b identity offline gate) — so
+    # a bootstrap cull was making live etag requests for cached models.
+    # pin_hf_offline runs at startup: offline iff the local config dir is
+    # set (the documented one-time config warm needs the hub when unset).
+    import os
+
+    from app.imagegen.engine import pin_hf_offline
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    pin_hf_offline(settings)  # unset -> hub stays reachable for the warm
+    assert "HF_HUB_OFFLINE" not in os.environ
+    assert "TRANSFORMERS_OFFLINE" not in os.environ
+
+    settings.set("models.image.pipeline_config_dir", "   ")
+    pin_hf_offline(settings)  # blank counts as unset
+    assert "HF_HUB_OFFLINE" not in os.environ
+
+    settings.set("models.image.pipeline_config_dir", "models/sdxl_config")
+    monkeypatch.setenv("HF_HUB_OFFLINE", "0")  # hard-set wins over stale env
+    pin_hf_offline(settings)
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+    assert os.environ["TRANSFORMERS_OFFLINE"] == "1"

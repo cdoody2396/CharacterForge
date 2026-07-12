@@ -23,20 +23,24 @@ pillow>=10.0
 # .safetensors + models/image_encoder/) pointed to by models.image.ip_adapter.
 #
 # --- Stage 3c — identity bootstrap + auto-filter (ACTIVE) --------------------
-# Face-embedding cull + optional face-swap + the Layer-2 pixel content
-# classifier + anime aesthetic rank. All run on ONNX (no extra torch) AFTER
-# the SDXL model is unloaded; CPU providers by default (zero VRAM).
-insightface>=0.7.3        # buffalo_l ArcFace embeddings + inswapper face-swap
+# Identity cull (imgutils CCIP + anime face detection — swapped from ArcFace
+# after the 2026-07-12 hardware calibration, IMAGE_PIPELINE.md §10) + optional
+# face-swap + the Layer-2 pixel content classifier + anime aesthetic rank.
+# All run on ONNX (no extra torch) AFTER the SDXL model is unloaded; CPU
+# providers by default (zero VRAM).
+insightface>=0.7.3        # SWAP-ONLY now: inswapper + its buffalo_l face stack
 onnxruntime>=1.17         # CPU provider (swap to onnxruntime-gpu to share the GPU)
-dghs-imgutils>=0.5        # anime_dbaesthetic + WD14 tagger + dbrating + nudenet
+dghs-imgutils>=0.5        # CCIP identity + anime face detect + anime_dbaesthetic + WD14 tagger + dbrating + nudenet
 opencv-contrib-python>=4.9  # required by imgutils; the ONLY cv2 (do NOT also install opencv-python)
 # insightface builds a Cython extension on Windows — a known-good prebuilt
 # wheel may be needed. Model WEIGHTS are USER-PLACED (like the checkpoint):
-#   models.image.face_recognition_dir   -> <dir>/models/buffalo_l/*.onnx
-#   models.image.content_classifier_dir -> imgutils HF cache (tagger/rating/nudenet/aesthetic)
+#   models.image.content_classifier_dir -> imgutils HF cache (tagger/rating/nudenet/
+#                                          aesthetic + ccip_onnx + anime_face_detection)
+#   models.image.face_recognition_dir   -> <dir>/models/buffalo_l/*.onnx  (SWAP-ONLY)
 #   models.image.face_swapper_path      -> inswapper_128.onnx  (OPTIONAL)
-# NOTE: inswapper_128 and buffalo_l are research/NON-COMMERCIAL licensed — fine
-# for this offline personal build; never redistributed with the packaged app.
+# LICENSES: ccip_onnx OpenRAIL, anime_face_detection MIT. inswapper_128 and
+# buffalo_l are research/NON-COMMERCIAL — now confined to the optional swap
+# path; fine for this offline personal build; never redistributed.
 #
 # --- Stage 3d — LoRA promotion (ACTIVE) ------------------------------------
 # No new pip pins: training runs as a headless SUBPROCESS into a user-placed

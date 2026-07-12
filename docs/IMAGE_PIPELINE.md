@@ -229,6 +229,23 @@ pose/wardrobe); high (>0.8) approaches a rigid lock and the reference's own
 pose/angle starts winning — reserved for the non-human end (§6 mitigation),
 tuned on hardware. A bad hand-edit degrades to the default, never crashes.
 
+### VRAM behavior (12 GB-class cards)
+
+Hardware-measured (2026-07-12, RTX 4070 Super 12 GB): the fully-resident
+identity stack (SDXL fp16 ~6.6 GB resident + ViT-H encoder + adapter
+~1.9 GB) peaks **12.18 GB** (standard) / **12.32 GB** (plus) at 832×1216 —
+past a 12 GB card's budget. The Windows (WDDM) driver silently spills to
+system RAM instead of OOMing, roughly halving throughput (18.6 s/frame vs
+9.7 base). Below `IDENTITY_RESIDENT_VRAM_MIN_GB` (14.0, `engine.py`) the
+identity backend therefore uses accelerate **model-cpu-offload** instead of
+a resident `.to("cuda")`: peak drops to ~the largest single component
+(measured **6.58 GB** standard / **6.01 GB** plus) for a few seconds of
+PCIe transfer per render (measured **12.0 s/frame** steady-state — faster
+than the spilled resident path). At/above the floor the resident path is
+unchanged. The predicate (`identity_needs_cpu_offload`) is pure and
+sandbox-tested; base and catalog modes are untouched (base peaks 10.35 GB
+and fits a 12 GB card without spill).
+
 ### Path safety (the security boundary)
 
 `reference_image_path` lives in a hand-editable `character.json`, so at
@@ -323,15 +340,45 @@ keep all of this sandbox-verifiable; only the real models are [HARDWARE]:
 
 | Abstraction | Real backend | Role |
 |---|---|---|
-| `FaceEmbedder` | InsightFace `buffalo_l` (det+rec) | ArcFace 512-d embedding + det_score/area/blur |
+| `FaceEmbedder` | imgutils CCIP + anime face detect | 768-d character embedding + det_score/area/blur |
 | `QualityScorer` | imgutils `anime_dbaesthetic` | soft aesthetic rank |
 | `ContentClassifier` | imgutils WD14 tags ∩ `minor_coded_tags.txt` + rating/nudenet | **Layer-2 pixel gate** |
 | `FaceSwapper` | InsightFace `inswapper_128` | optional identity lock |
 
-**Identity similarity** = cosine (dot of unit `normed_embedding`s) vs the
-reference; default floor **0.50** (conservative — a tight cluster is what 3d
-needs). Every threshold is a hardware-tuned default (§16), coerced defensively
-from `image_gen.bootstrap.*` (a bad hand-edit degrades to the code default).
+**Identity similarity** = cosine (dot of unit embeddings) vs the reference;
+default floor **0.50**. The embedding is the L2-normalized whole-image
+**CCIP** feature (`_CcipEmbedder`), so the cull's cosine IS CCIP's own
+character metric in disguise — `ccip_difference == (1 − cos) / 2`, verified
+exactly on hardware. Hardware-measured on real 3b output (2026-07-12):
+same-character frames score **0.63–0.82**, a different character **0.33** —
+the 0.50 floor splits them with ~0.15 margin on both sides; CCIP's canonical
+"same character" threshold (diff 0.1785) corresponds to a *tighter* cos
+≈ 0.643 if the vetted set needs it. Every threshold is a hardware-tuned
+default (§16), coerced defensively from `image_gen.bootstrap.*` (a bad
+hand-edit degrades to the code default).
+
+The detector's own gate mirrors the configured floor
+(`detector_threshold()`, [0,1]-clamped): it feeds the anime face detector's
+`conf_threshold` and, swap-only, insightface `prepare(det_thresh=…)` — a
+detector default would otherwise silently drop faces *before* the cull's
+floor ever saw them, making a tuned floor a dead knob (hardware-validation
+catch, 2026-07-12).
+
+**Embedder swap (2026-07-12, user-approved):** the original pick,
+photo-trained `buffalo_l`/ArcFace, measured AT ITS MARGIN on the
+WAI-Illustrious anime style — of six visually-identical steered renders,
+three yielded **no detection even at det_thresh 0.20** (the rest det
+0.25–0.39), and same-character ArcFace cosine measured 0.35–0.58, straddling
+the 0.50 floor; as-calibrated the cull would have rejected essentially every
+bootstrap candidate. Swapped to imgutils **CCIP + anime face detection**
+behind the same `FaceEmbedder` Protocol (the abstraction was built for
+exactly this): detection recovered to 8/8 at conf 0.83–0.89 and the same/
+different separation above. The pure cull, fakes, and every floor knob are
+byte-unchanged. `inswapper` face-swap (default OFF) still uses the buffalo_l
+stack for its own detection — built only when `face_swap_enabled`; its
+re-similarity check now runs through CCIP like everything else. Observed
+face areas on real frames run 0.03–0.12 vs `face_area_min` 0.04 — watch at
+the §11 calibration run.
 
 ### Layer-2 pixel gate — the safety-critical part (§11)
 
@@ -357,9 +404,9 @@ guarantee**. `minor_coded_tags.txt` is the editable tuning surface.
 ### Face-swap (optional, default OFF)
 
 Runs **strictly after** the similarity cull, on the kept set only — swapping
-first would collapse every ArcFace cosine toward 1.0 and *mask* drift. The
-swapped (new) pixels are re-classified + re-similarity-checked fail-closed; a
-swap that fails falls back to its original.
+first would collapse the face-region similarity and *mask* drift. The
+swapped (new) pixels are re-classified + re-similarity-checked (CCIP, like
+every frame) fail-closed; a swap that fails falls back to its original.
 
 ### VRAM sequencing (§3, one heavy model at a time)
 
@@ -380,18 +427,25 @@ escaped manifest path, or a now-blocked frame cannot enter the training set.
 ### Model layout (user-placed, offline — like the checkpoint)
 
 ```
-models.image.face_recognition_dir   -> <dir>/models/buffalo_l/{det_10g,w600k_r50,...}.onnx
-models.image.content_classifier_dir -> imgutils HF cache (WD14 tagger + rating + nudenet + aesthetic)
+models.image.content_classifier_dir -> imgutils HF cache (WD14 tagger + rating + nudenet + aesthetic
+                                       + CCIP identity + anime face detection — the WHOLE default cull)
+models.image.face_recognition_dir   -> <dir>/models/buffalo_l/{det_10g,w600k_r50,...}.onnx  (SWAP-ONLY)
 models.image.face_swapper_path      -> inswapper_128.onnx        (OPTIONAL — face_swap_enabled)
 models.image.onnx_providers         -> ["CPUExecutionProvider"]  (zero VRAM; swap to CUDA after unload)
 ```
 
-`buffalo_l` root footgun: InsightFace loads from `<root>/models/buffalo_l/`, so
-`face_recognition_dir` is the dir that *contains* `models/`. FaceAnalysis has
-**no** `download=False` flag and will silently fetch `buffalo_l.zip` if the dir
-is absent — so preflight existence-checks it and refuses (`face_models_missing`)
-rather than reaching the network. **License:** `inswapper_128` and `buffalo_l`
-are research/non-commercial — fine for this offline personal build, never
+Since the 2026-07-12 embedder swap the default cull path needs ONLY the
+imgutils HF cache; `preflight_cull` witnesses it via `content_classifier_dir`
+(`classifier_unavailable` when absent) and requires the insightface stack
+only when `face_swap_enabled`. `buffalo_l` root footgun (swap path):
+InsightFace loads from `<root>/models/buffalo_l/`, so `face_recognition_dir`
+is the dir that *contains* `models/`. FaceAnalysis has **no** `download=False`
+flag and will silently fetch `buffalo_l.zip` if the dir is absent — so
+preflight existence-checks it and refuses (`face_models_missing`) rather than
+reaching the network. **Licenses:** CCIP (`deepghs/ccip_onnx`) is OpenRAIL,
+anime face detection (`deepghs/anime_face_detection`) is MIT;
+`inswapper_128` and `buffalo_l` are research/non-commercial — now confined to
+the optional swap path, fine for this offline personal build, never
 redistributed with the packaged app.
 
 ### Output + provenance
@@ -413,18 +467,21 @@ every content reject.
 
 On the 16 GB target machine (after the 3a/3b checklists pass):
 
-1. Place `buffalo_l` (set `face_recognition_dir`), the imgutils classifier
-   cache (`content_classifier_dir`), and optionally `inswapper_128.onnx`.
-   Confirm `image_engine_status` (or a bootstrap preflight) sees them.
+1. Pre-warm the imgutils HF cache (`content_classifier_dir`) with the WD14 +
+   aesthetic + **CCIP (`deepghs/ccip_onnx`) + anime face detection
+   (`deepghs/anime_face_detection`)** models (done 2026-07-12 on the target).
+   Only if enabling face-swap: place `buffalo_l` (`face_recognition_dir`) +
+   `inswapper_128.onnx`. Confirm a bootstrap preflight sees them.
 2. `image_bootstrap_generate` on a character with a reference → confirm the
    batch generates with the image model loaded, the model is **unloaded**
    before the cull runs (task-manager VRAM check), candidates + `bootstrap.json`
    land under `bootstrap/`, and a proposed grid comes back. Single window / no
    console throughout.
-3. **similarity_floor calibration:** the cull scores *generated* (not
-   photographic) faces — noisier, and generic SDXL faces can inflate
-   cross-identity cosine. Tune 0.50 (may over-cull) vs ~0.35 (may under-cull)
-   on the real checkpoint before trusting the grid (§16).
+3. **similarity_floor calibration (CCIP):** pre-measured on real 3b frames
+   (same-char cos 0.63–0.82, other-char 0.33 — 0.50 splits cleanly); confirm
+   on the real 64-batch, and if the vetted set needs tightening use the
+   CCIP-canonical ≈0.643. Watch `face_area_min` 0.04 vs observed anime-YOLO
+   face areas 0.03–0.12 (§16).
 4. **Layer-2 accuracy (safety):** verify the WD14/minor-coded ensemble on the
    actual style; tune `minor_coded_tags.txt`. Expect both FP and FN on stylized
    anime — the value is the stacked ensemble + bias-to-block + Layer-4 review,
@@ -432,11 +489,12 @@ On the 16 GB target machine (after the 3a/3b checklists pass):
    and audited.
 5. **Face-swap:** enable, confirm swaps run only post-cull, the swapped pixels
    are re-classified, and quality/seam is acceptable on tall 832×1216 portraits.
-6. **Fully offline:** with all model dirs set + airplane mode, a full
-   bootstrap runs (FaceAnalysis must not trigger the silent `buffalo_l`
-   auto-download; the imgutils HF cache must be pre-warmed; `HF_HUB_OFFLINE`).
+6. **Fully offline:** with the cache pre-warmed + airplane mode, a full
+   bootstrap runs (`HF_HUB_OFFLINE`; the CCIP/detect/WD14 models must all
+   resolve from cache; if swapping, FaceAnalysis must not trigger the silent
+   `buffalo_l` auto-download).
 7. **opencv:** exactly one cv2 (`opencv-contrib-python`, not `opencv-python`);
-   confirm the Windows `insightface` wheel installs.
+   confirm the Windows `insightface` wheel installs (swap path only).
 8. Net keep-rate out of N=64 (does `more=True` get routinely needed to hit the
    floor?); confirm `confirm_vetted` copies the vetted set and 3d can read it.
 

@@ -293,6 +293,9 @@ def _default_matte_factory(settings: Settings, config: MatteConfig) -> MatteTool
 
     # Offline: imgutils pulls its ONNX heads from the HF cache; pin it offline
     # before the first imgutils import (same trio as the cull factory).
+    # HF_HOME backstop for direct-construction flows — the authoritative pin
+    # is cull.pin_hf_cache() at app startup (env freezes at first hub import).
+    os.environ.setdefault("HF_HOME", str(content_classifier_dir(settings)))
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")

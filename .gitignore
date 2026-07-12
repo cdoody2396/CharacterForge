@@ -9,3 +9,7 @@ data/logs/
 # model, …). Large + partly non-commercial-licensed — never committed; each
 # is pointed at by a models.image.* settings key (relative paths resolve here).
 models/
+# Runtime character data (records, references, bootstrap candidates, vetted
+# sets, catalogs) — user data produced by the app, like settings/logs above.
+# The 3c validation set for 3d training lives here on THIS machine only.
+data/characters/

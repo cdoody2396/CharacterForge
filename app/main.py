@@ -28,6 +28,20 @@ def build_services() -> tuple[
         # this reset.
         settings.set("models.active", None)
     audit = AuditLog(DATA_DIR / "logs", enabled=bool(settings.get("safety.logging_enabled", True)))
+    # Pin the process HF cache to the configured classifier dir BEFORE any
+    # heavy import can freeze HF_HOME (hardware-validation catch: the setting
+    # was a preflight witness only — imgutils would silently read the user's
+    # default cache instead of the configured dir).
+    from .imagegen import cull as _cull
+    from .imagegen import engine as _engine
+
+    _cull.pin_hf_cache(settings)
+    # Same freeze-at-first-heavy-import hazard, offline flavor: with the §2
+    # offline config complete (local pipeline_config_dir), pin the hub
+    # offline BEFORE the base backend's diffusers import can freeze
+    # HF_HUB_OFFLINE=False for the whole process (hardware-validation catch:
+    # the cull's cached-model resolutions were making live etag requests).
+    _engine.pin_hf_offline(settings)
     content_filter = Layer1Filter()
     creator = build_creator(DATA_DIR, audit)
     # The image service reads the creator's live catalog so "Reload options"

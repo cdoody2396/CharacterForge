@@ -337,19 +337,39 @@ def onnx_providers(settings: Settings) -> list[str]:
     return ["CPUExecutionProvider"]
 
 
+def pin_hf_cache(settings: Settings) -> None:
+    """Point the process's Hugging Face cache at ``content_classifier_dir``
+    (the setting's documented meaning: "imgutils HF cache"). MUST run at app
+    startup, before any heavy import: huggingface_hub freezes HF_HOME at
+    import time, and in the normal flow the ENGINE (diffusers) imports it
+    long before the first cull — an env pin at toolkit-build time would be
+    silently ineffective. Hard-set, not setdefault: the app setting is
+    authoritative for this app's process. No-op when the setting is unset
+    (preflight fails closed as classifier_unavailable anyway)."""
+    import os
+
+    cc = content_classifier_dir(settings)
+    if cc is not None:
+        os.environ["HF_HOME"] = str(cc)
+
+
 def preflight_cull(settings: Settings, need_swap: bool) -> str | None:
     """Cheap, import-free existence check of the required cull models, run
     BEFORE burning a batch. Returns a CullUnavailable kind or None. The full
-    factory re-guards defensively (fail-closed)."""
-    fr = face_recognition_dir(settings)
-    if fr is None:
-        return "face_models_missing"
-    pack = fr / "models" / "buffalo_l"
-    if not all((pack / f).is_file() for f in BUFFALO_REQUIRED):
-        return "face_models_missing"
-    if content_classifier_dir(settings) is None or not content_classifier_dir(settings).is_dir():
+    factory re-guards defensively (fail-closed). The identity embedder (CCIP
+    + anime face detection) loads from the imgutils HF cache — the classifier
+    dir witnesses all of it; buffalo_l is needed only by the optional
+    face-swap (§10 embedder swap, 2026-07-12)."""
+    cc = content_classifier_dir(settings)
+    if cc is None or not cc.is_dir():
         return "classifier_unavailable"
     if need_swap:
+        fr = face_recognition_dir(settings)
+        if fr is None:
+            return "face_models_missing"
+        pack = fr / "models" / "buffalo_l"
+        if not all((pack / f).is_file() for f in BUFFALO_REQUIRED):
+            return "face_models_missing"
         sw = face_swapper_path(settings)
         if sw is None or not sw.is_file():
             return "swap_model_missing"
@@ -394,6 +414,21 @@ def coerce_cull_config(settings: Settings) -> CullConfig:
     )
 
 
+def detector_threshold(settings: Settings) -> float:
+    """The detector-level confidence gate — the CONFIGURED det_score_floor,
+    [0,1]-clamped at this use site (the coercion only finite-guards it — as
+    a comparison it needs no more, but the detectors consume it). Feeds the
+    CCIP embedder's ``detect_faces(conf_threshold=…)`` and, swap-only, the
+    insightface ``prepare(det_thresh=…)``. Mirroring the floor matters:
+    a detector's own default would otherwise drop faces BEFORE
+    ``score_candidate``'s floor ever saw them, making a tuned floor a dead
+    knob (hardware-validation catch, 2026-07-12, found on insightface's 0.5
+    default vs anime faces in the 0.2-0.5 band). The pure cull still applies
+    the floor to whatever the detector returns, so this only WIDENS what the
+    configured floor can see, never loosens the floor itself."""
+    return min(1.0, max(0.0, coerce_cull_config(settings).det_score_floor))
+
+
 def _load_minor_tags() -> frozenset[str]:
     tags: set[str] = set()
     for raw_line in MINOR_TAGS_FILE.read_text(encoding="utf-8").splitlines():
@@ -410,35 +445,49 @@ def _load_minor_tags() -> frozenset[str]:
 # ===========================================================================
 
 
-class _InsightFaceEmbedder:
-    """buffalo_l detection + recognition. One app, shared with the swapper."""
+class _CcipEmbedder:
+    """imgutils CCIP character identity + anime-trained face detection (the
+    3c embedder, swapped from buffalo_l/ArcFace after the 2026-07-12 hardware
+    calibration — photo-trained ArcFace sat at its margin on the anime style,
+    §10). The embedding is the L2-normalized whole-image CCIP feature, so the
+    pure cull's cosine similarity IS CCIP's own metric in disguise
+    (``ccip_difference == (1 - cos) / 2``, verified exactly on hardware);
+    det_score/area/count come from the anime face detector, whose
+    conf_threshold mirrors the configured floor (``detector_threshold``)."""
 
-    def __init__(self, app: Any):
-        self._app = app
+    def __init__(self, det_thresh: float):
+        self._det_thresh = det_thresh
 
     def embed(self, path: Path) -> FaceReading:
         import cv2
+        import numpy as np
+        from imgutils.detect import detect_faces
+        from imgutils.metrics import ccip_extract_feature
 
         bgr = cv2.imread(str(path))  # BGR uint8 (NOT PIL RGB)
         if bgr is None:
             raise ValueError(f"could not decode image: {path}")
-        faces = self._app.get(bgr, max_num=0)
+        faces = detect_faces(str(path), conf_threshold=self._det_thresh)
         if not faces:
             return FaceReading(found=False, face_count=0)
-        primary = max(
-            faces,
-            key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
+        # Primary face = largest bbox (the ArcFace backend's rule, kept).
+        (x0, y0, x1, y1), _, det_score = max(
+            faces, key=lambda f: (f[0][2] - f[0][0]) * (f[0][3] - f[0][1])
         )
         height, width = bgr.shape[:2]
-        area = (primary.bbox[2] - primary.bbox[0]) * (primary.bbox[3] - primary.bbox[1])
+        area = (x1 - x0) * (y1 - y0)
         area_frac = float(area) / float(width * height) if width and height else 0.0
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-        embedding = tuple(float(x) for x in primary.normed_embedding.tolist())
+        feat = np.asarray(ccip_extract_feature(str(path)), dtype=float).ravel()
+        norm = float(np.linalg.norm(feat))
+        if not norm > 0.0:  # degenerate feature -> no usable identity signal
+            return FaceReading(found=False, face_count=len(faces))
+        embedding = tuple(float(x) for x in (feat / norm).tolist())
         return FaceReading(
             found=True,
             face_count=len(faces),
-            det_score=float(primary.det_score),
+            det_score=float(det_score),
             area_fraction=area_frac,
             sharpness=sharpness,
             embedding=embedding,
@@ -540,26 +589,34 @@ def _default_toolkit_factory(
 
     # Offline: imgutils pulls its ONNX heads from the HF cache; pin it offline
     # before the first imgutils import (extends engine.py's HF posture).
+    # HF_HOME backstop for direct-construction flows — the authoritative pin
+    # is pin_hf_cache() at app startup (env is frozen at first hub import).
+    os.environ.setdefault("HF_HOME", str(content_classifier_dir(settings)))
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
     providers = onnx_providers(settings)
-    recognition_dir = face_recognition_dir(settings)
+    det_thresh = detector_threshold(settings)
 
-    from insightface.app import FaceAnalysis
-
-    app = FaceAnalysis(
-        name="buffalo_l",
-        root=str(recognition_dir),
-        allowed_modules=["detection", "recognition"],  # skip ~150MB landmark/attr
-        providers=providers,
-    )
-    app.prepare(ctx_id=-1, det_size=(640, 640))  # ctx_id=-1 forces CPU
-
-    embedder = _InsightFaceEmbedder(app)
+    embedder = _CcipEmbedder(det_thresh)
     quality = _ImgutilsQualityScorer()
     classifier = _ImgutilsContentClassifier(_load_minor_tags())
+    app = None
+    if need_swap:
+        # buffalo_l is only the SWAPPER's face stack now (inswapper needs its
+        # detection + ArcFace source faces); the identity embedder is CCIP.
+        from insightface.app import FaceAnalysis
+
+        app = FaceAnalysis(
+            name="buffalo_l",
+            root=str(face_recognition_dir(settings)),
+            allowed_modules=["detection", "recognition"],  # skip ~150MB landmark/attr
+            providers=providers,
+        )
+        app.prepare(  # ctx_id=-1 forces CPU
+            ctx_id=-1, det_size=(640, 640), det_thresh=det_thresh
+        )
     swapper = _InSwapper(face_swapper_path(settings), app, providers) if need_swap else None
     ref_reading = embedder.embed(reference_abs) if reference_abs is not None else FaceReading(found=False)
 
