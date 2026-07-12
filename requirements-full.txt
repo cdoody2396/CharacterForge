@@ -77,6 +77,12 @@ opencv-contrib-python>=4.9  # required by imgutils; the ONLY cv2 (do NOT also in
 #     rembg v0.0.0 release (~973 MB general / ~214 MB lite; CPU is seconds-per-
 #     frame — prefer GPU providers after image_engine_release, or the lite file).
 #
+# --- Stage 3g — on-demand generation + cache (ACTIVE) ------------------------
+# No new pip pins and no new model files: 3g composes the already-active
+# slices — the 3e LoRA catalog engine (3a torch/diffusers/peft), the 3c cull
+# (onnxruntime/imgutils), and the 3f matter (onnxruntime/pillow) — into the
+# seed-plus-GROW cache (§7).
+#
 # --- Stage 6 — chat loop ----------------------------------------------------
 # llama-cpp-python      # mid-class quantized LLM (≈12–24B GGUF)
 # sentence-transformers # RAG embeddings (6b)

@@ -10,12 +10,15 @@ from app.config import Settings
 from app.imagegen import PromptAssembler
 from app.imagegen.catalog import (
     ASIS_OUTFIT,
+    CatalogCell,
     CatalogConfig,
     CatalogState,
+    STATE_KEYS,
     build_cells,
     coerce_catalog_config,
     load_catalog_states,
     record_outfits,
+    resolve_cell,
 )
 from app.model import CharacterRecord, load_option_catalog
 
@@ -124,6 +127,75 @@ def test_cell_extra_fragments():
     assert "gentle smile" in texts and "upper body portrait" in texts
     assert cell.state() == {"expression": "smile", "pose": "portrait",
                             "outfit": "casual"}
+
+
+# -- resolve_cell (Stage 3g state vocabulary) ---------------------------------
+
+
+def _resolve(state, record=None):
+    catalog = load_option_catalog()
+    expr, poses = load_catalog_states()
+    return resolve_cell(record or make_record(), catalog, expr, poses, state)
+
+
+def test_resolve_cell_happy_path():
+    cell = _resolve({"expression": "smile", "pose": "sitting",
+                     "outfit": "casual"})
+    assert isinstance(cell, CatalogCell)
+    assert cell.state() == {"expression": "smile", "pose": "sitting",
+                            "outfit": "casual"}
+    # prompts come from the DATA, never the caller
+    assert cell.expression_prompt == "gentle smile"
+    assert cell.pose_prompt == "sitting"
+    assert cell.outfit_prompt  # from the option catalog
+
+
+def test_resolve_cell_asis_always_valid():
+    # even with a wardrobe defined, the base look is a legitimate state
+    cell = _resolve({"expression": "neutral", "pose": "portrait",
+                     "outfit": ASIS_OUTFIT})
+    assert isinstance(cell, CatalogCell)
+    assert cell.outfit_id == ASIS_OUTFIT and cell.outfit_prompt == ""
+    # and it is the only outfit for a wardrobe-less record
+    cell2 = _resolve({"expression": "neutral", "pose": "portrait",
+                      "outfit": ASIS_OUTFIT}, record=make_record(tags={}))
+    assert isinstance(cell2, CatalogCell)
+
+
+@pytest.mark.parametrize("bad,expected_kind", [
+    (None, "invalid"),
+    ("smile", "invalid"),
+    ([], "invalid"),
+    ({}, "invalid"),                                          # missing keys
+    ({"expression": "smile", "pose": "sitting"}, "invalid"),  # missing outfit
+    ({"expression": "smile", "pose": "sitting", "outfit": "casual",
+      "extra": "x"}, "invalid"),                              # unknown key
+    ({"expression": 5, "pose": "sitting", "outfit": "casual"}, "invalid"),
+    ({"expression": " ", "pose": "sitting", "outfit": "casual"}, "invalid"),
+    ({"expression": "nope", "pose": "sitting", "outfit": "casual"},
+     "unknown_state"),
+    ({"expression": "smile", "pose": "nope", "outfit": "casual"},
+     "unknown_state"),
+    ({"expression": "smile", "pose": "sitting", "outfit": "ballgown"},
+     "unknown_state"),                                        # not in wardrobe
+])
+def test_resolve_cell_rejects_bad_shapes_and_unknown_ids(bad, expected_kind):
+    result = _resolve(bad)
+    assert isinstance(result, tuple)
+    kind, message = result
+    assert kind == expected_kind and message
+
+
+def test_resolve_cell_outfit_must_be_this_characters():
+    # a REAL outfit option that this record did not select is still unknown
+    result = _resolve({"expression": "smile", "pose": "sitting",
+                       "outfit": "fantasy_armor"},
+                      record=make_record(tags={"outfit": ["casual"]}))
+    assert result[0] == "unknown_state"
+
+
+def test_state_keys_are_the_documented_triple():
+    assert STATE_KEYS == ("expression", "pose", "outfit")
 
 
 # -- assembler catalog hooks -------------------------------------------------

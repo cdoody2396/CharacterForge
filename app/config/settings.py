@@ -102,7 +102,9 @@ DEFAULTS: dict[str, Any] = {
         },
         # Stage-3e seed-catalog matrix (§7): expressions × poses × wardrobe,
         # rendered LoRA-steered and auto-filtered by the 3c cull. Bounded +
-        # coerced; a bad hand-edit degrades to the default.
+        # coerced; a bad hand-edit degrades to the default. Stage-3g on-demand
+        # generation reuses lora_scale / max_attempts / face_area_min verbatim
+        # (§7: the cache is the catalog, grown) — no separate 3g knobs.
         "catalog": {
             "max_expressions": 5,
             "max_poses": 4,

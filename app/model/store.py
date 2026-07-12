@@ -4,6 +4,7 @@ On-disk layout (self-contained app folder, DECISIONS.md §2):
 
     <root>/characters/<id>/character.json     the record
                           /catalog.json        the catalog manifest (Stage 3)
+                          /cache.json          the on-demand cache manifest (3g)
                           /reference/           reference image(s) (Stage 3)
                           /lora/                trained LoRA (Stage 3d)
                           /catalog/             rendered frames (Stage 3e)
@@ -111,6 +112,36 @@ class CharacterStore:
             removed = True
         return removed
 
+    # -- on-demand cache (Stage 3g) paths ------------------------------------
+
+    def cache_path(self, character_id: str) -> Path:
+        return self.char_dir(character_id) / "cache.json"
+
+    def cache_frames_dir(self, character_id: str) -> Path:
+        return self.char_dir(character_id) / "cache"
+
+    def cache_matted_dir(self, character_id: str) -> Path:
+        """Stage-3g matte output dir. Inside cache/ so a cache clear (or a
+        Stage-4 LRU eviction of the tree) removes derived mattes with their
+        source frames and footprint counts them as cache_bytes."""
+        return self.cache_frames_dir(character_id) / "matted"
+
+    def clear_cache(self, character_id: str) -> bool:
+        """Remove the on-demand cache frames + manifest (Stage 3g). Confined
+        under char_dir; the frames dir and its sibling cache.json both go."""
+        import shutil
+
+        removed = False
+        frames = self.cache_frames_dir(character_id)
+        if frames.is_dir():
+            shutil.rmtree(frames)
+            removed = True
+        manifest = self.cache_path(character_id)
+        if manifest.is_file():
+            manifest.unlink()
+            removed = True
+        return removed
+
     # -- identity bootstrap (Stage 3c) paths --------------------------------
 
     def bootstrap_dir(self, character_id: str) -> Path:
@@ -194,6 +225,23 @@ class CharacterStore:
 
     def load_catalog(self, character_id: str) -> CatalogManifest | None:
         path = self.catalog_path(character_id)
+        if not path.is_file():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return CatalogManifest.from_dict(data)
+
+    # -- on-demand cache manifests (Stage 3g) --------------------------------
+
+    def save_cache(self, manifest: CatalogManifest) -> Path:
+        """The cache manifest reuses the CatalogManifest shape (its entries
+        carry on_demand=True + last_used). Routes by the manifest's own id,
+        like save_catalog — the service guards the id at load."""
+        path = self.cache_path(manifest.character_id)
+        atomic_write_json(path, manifest.to_dict())
+        return path
+
+    def load_cache(self, character_id: str) -> CatalogManifest | None:
+        path = self.cache_path(character_id)
         if not path.is_file():
             return None
         data = json.loads(path.read_text(encoding="utf-8"))

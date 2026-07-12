@@ -150,7 +150,10 @@ class IdentityAnchor:
 
 @dataclass
 class CatalogEntry:
-    """One rendered frame's manifest row (§7). Stage 3 fills these."""
+    """One rendered frame's manifest row (§7). Stage 3 fills these.
+    ``last_used`` is the Stage-4 LRU signal (§14), recorded from Stage 3g on
+    for on-demand cache entries (creation + every cache hit); seed-catalog
+    entries leave it None. Additive — old manifests load unchanged."""
 
     frame_id: str
     path: str
@@ -158,6 +161,7 @@ class CatalogEntry:
     matted_path: str | None = None
     on_demand: bool = False
     bytes: int = 0
+    last_used: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -167,17 +171,33 @@ class CatalogEntry:
             "matted_path": self.matted_path,
             "on_demand": self.on_demand,
             "bytes": self.bytes,
+            "last_used": self.last_used,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "CatalogEntry":
+        # A non-dict entry (a natural hand-edit: `"entries": [null]`) must
+        # raise a loader-guarded type, never AttributeError from .get —
+        # review catch: the last_used read reordered evaluation ahead of the
+        # ["frame_id"] subscript and turned the guarded TypeError into an
+        # unguarded AttributeError through every manifest bridge.
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"catalog entry must be an object, got {type(data).__name__}")
+        raw_last = data.get("last_used")
         return cls(
             frame_id=str(data["frame_id"]),
             path=str(data["path"]),
-            state=dict(data.get("state", {})),
+            # str-normalize both sides (the record's __post_init__ stance):
+            # our writers only ever store strings, and a hand-edited
+            # Infinity/NaN float would otherwise ride this dict verbatim
+            # into a bridge payload as invalid JSON (red-team catch).
+            state={str(k): str(v)
+                   for k, v in dict(data.get("state", {})).items()},
             matted_path=data.get("matted_path"),
             on_demand=bool(data.get("on_demand", False)),
             bytes=int(data.get("bytes", 0)),
+            last_used=str(raw_last) if raw_last is not None else None,
         )
 
 

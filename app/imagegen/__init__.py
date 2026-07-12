@@ -14,10 +14,12 @@ from .catalog import (
     CatalogCell,
     CatalogConfig,
     CatalogState,
+    STATE_KEYS,
     build_cells,
     coerce_catalog_config,
     load_catalog_states,
     record_outfits,
+    resolve_cell,
 )
 from .engine import (
     DEFAULT_IP_ADAPTER_SCALE,
@@ -148,4 +150,7 @@ __all__ = [
     "coerce_matte_config",
     "evaluate_matte",
     "preflight_matte",
+    # Stage 3g — on-demand generation + cache
+    "STATE_KEYS",
+    "resolve_cell",
 ]

@@ -252,6 +252,26 @@ class Api:
         GPU."""
         return self._images.matte_status(character_id)
 
+    # -- on-demand generation + cache (Stage 3g) ---------------------------------
+
+    def image_generate_on_demand(self, character_id: Any = None,
+                                 state: Any = None, force: Any = False) -> dict:
+        """Resolve a state (expression/pose/outfit ids) to a frame (3g): a
+        covered state serves instantly from the catalog/cache; a novel state
+        generates LoRA-steered, auto-filters, mattes, and caches. Structured
+        no_lora/engine/model errors on the sandbox."""
+        return self._images.generate_on_demand(character_id, state, force)
+
+    def image_cache_status(self, character_id: Any = None) -> dict:
+        """Cache frame count / states / last_used / matte coverage (3g). No
+        GPU."""
+        return self._images.cache_status(character_id)
+
+    def image_clear_cache(self, character_id: Any = None) -> dict:
+        """Delete the on-demand cache (frames + mattes + manifest); evicted
+        states regenerate on demand (3g, §14)."""
+        return self._images.clear_cache(character_id)
+
 
 def _safe_int(value: Any, default: int) -> int:
     """Persisted geometry may be hand-edited to a non-number. Because the app

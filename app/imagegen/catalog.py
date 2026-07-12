@@ -147,6 +147,66 @@ def build_cells(
     return cells
 
 
+STATE_KEYS = ("expression", "pose", "outfit")
+
+
+def resolve_cell(
+    record: CharacterRecord,
+    catalog: OptionCatalog,
+    expressions: list[CatalogState],
+    poses: list[CatalogState],
+    state: object,
+) -> CatalogCell | tuple[str, str]:
+    """Resolve a caller-supplied state triple into a CatalogCell (Stage 3g).
+
+    The caller only picks IDS — every prompt fragment comes from the editable
+    states file / the option catalog, never from the bridge, so the on-demand
+    surface cannot inject prompt text (the Layer-1 gate still re-runs on the
+    assembled cell regardless). Strict shape discipline (the creator-payload
+    stance): exactly the three state keys, all strings, all known — an unknown
+    id is ("unknown_state", ...) and a malformed shape is ("invalid", ...).
+
+    ``outfit`` accepts any wardrobe selection of the record plus the ASIS
+    sentinel (render the base look) — always, even when a wardrobe exists:
+    the as-is look is itself a legitimate on-demand state.
+    """
+    if not isinstance(state, dict):
+        return ("invalid", "state must be an object with "
+                           "expression/pose/outfit")
+    unknown = [str(k) for k in state.keys() if k not in STATE_KEYS]
+    if unknown:
+        return ("invalid", f"unknown state key {unknown[0]!r}")
+    values: dict[str, str] = {}
+    for key in STATE_KEYS:
+        if key not in state:
+            return ("invalid", f"state is missing {key!r}")
+        value = state[key]
+        if not isinstance(value, str) or not value.strip():
+            return ("invalid", f"state {key!r} must be a non-empty string")
+        values[key] = value
+
+    expr = next((e for e in expressions if e.id == values["expression"]), None)
+    if expr is None:
+        return ("unknown_state",
+                f"unknown expression {values['expression']!r}")
+    pose = next((p for p in poses if p.id == values["pose"]), None)
+    if pose is None:
+        return ("unknown_state", f"unknown pose {values['pose']!r}")
+    outfit_id = values["outfit"]
+    if outfit_id == ASIS_OUTFIT:
+        outfit_prompt = ""
+    else:
+        wardrobe = dict(record_outfits(record, catalog))
+        if outfit_id not in wardrobe:
+            return ("unknown_state",
+                    f"outfit {outfit_id!r} is not in this character's wardrobe")
+        outfit_prompt = wardrobe[outfit_id]
+    return CatalogCell(
+        expression_id=expr.id, pose_id=pose.id, outfit_id=outfit_id,
+        expression_prompt=expr.prompt, pose_prompt=pose.prompt,
+        outfit_prompt=outfit_prompt)
+
+
 def coerce_catalog_config(settings: Settings) -> CatalogConfig:
     """Build a CatalogConfig from image_gen.catalog.*, coerced defensively so a
     hand-edited Infinity/NaN/string never reaches the matrix (mirrors the cull

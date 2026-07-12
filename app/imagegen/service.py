@@ -114,6 +114,20 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Everything a hand-edited JSON artifact can raise through json.loads +
+# from_dict, mapped to a structured *_corrupt/io by every loader guard (the
+# 3d fix-across-loaders precedent): ValueError/TypeError (bad shapes/values,
+# incl. json.JSONDecodeError and InvalidId subclasses), LookupError (missing
+# required key), OverflowError (int(Infinity) — json.loads accepts
+# Infinity/1e999 as floats), AttributeError (.get on a non-dict nested value
+# — review catch, escaped every manifest bridge), RecursionError
+# (pathologically nested JSON — red-team catch), OSError (fs faults).
+ARTIFACT_LOAD_ERRORS = (
+    OSError, json.JSONDecodeError, ValueError, TypeError, LookupError,
+    OverflowError, AttributeError, RecursionError, InvalidId,
+)
+
+
 class ImageService:
     """Owns the engine + assembler on behalf of the UI bridge.
 
@@ -669,8 +683,7 @@ class ImageService:
         manifest, None (absent), or an error dict."""
         try:
             return self._store.load_bootstrap(character_id)
-        except (OSError, json.JSONDecodeError, ValueError, TypeError, LookupError,
-                OverflowError, InvalidId) as exc:
+        except ARTIFACT_LOAD_ERRORS as exc:
             # LookupError (KeyError) covers a valid-JSON manifest that is
             # missing a required key — a natural hand-edit that from_dict
             # subscripts blindly.
@@ -680,8 +693,7 @@ class ImageService:
     def _load_vetted_manifest(self, character_id: str):
         try:
             return self._store.load_vetted(character_id)
-        except (OSError, json.JSONDecodeError, ValueError, TypeError, LookupError,
-                OverflowError, InvalidId) as exc:
+        except ARTIFACT_LOAD_ERRORS as exc:
             return {"ok": False, "kind": "bootstrap_corrupt",
                     "error": f"the vetted manifest is unreadable: {exc}"}
 
@@ -1213,8 +1225,7 @@ class ImageService:
     def _load_lora_manifest(self, character_id: str):
         try:
             return self._store.load_lora_manifest(character_id)
-        except (OSError, json.JSONDecodeError, ValueError, TypeError, LookupError,
-                OverflowError, InvalidId) as exc:
+        except ARTIFACT_LOAD_ERRORS as exc:
             return {"ok": False, "kind": "lora_corrupt",
                     "error": f"the LoRA manifest is unreadable: {exc}"}
 
@@ -1362,8 +1373,7 @@ class ImageService:
             return record
         try:
             manifest = self._store.load_catalog(record.id)
-        except (OSError, json.JSONDecodeError, ValueError, TypeError, LookupError,
-                OverflowError, InvalidId) as exc:
+        except ARTIFACT_LOAD_ERRORS as exc:
             return {"ok": False, "kind": "catalog_corrupt",
                     "error": f"the catalog manifest is unreadable: {exc}"}
         if manifest is None:
@@ -1390,7 +1400,8 @@ class ImageService:
 
     # -- catalog internals ------------------------------------------------------
 
-    def _catalog_cell_prompts(self, record, cells, trigger):
+    def _catalog_cell_prompts(self, record, cells, trigger, *,
+                              context_prefix="image.catalog"):
         """Pre-assemble + gate every cell's prompt (identity minus wardrobe +
         the trigger + the cell's outfit/expression/pose). A cell whose state
         fragments trip the gate is skipped + audited, not fatal."""
@@ -1406,17 +1417,22 @@ class ImageService:
             except PromptBlocked as exc:
                 self._audit.log("filter_block", layer=1, category=exc.category,
                                 matched=exc.matched,
-                                context=f"image.catalog.{exc.source}",
+                                context=f"{context_prefix}.{exc.source}",
                                 character_id=record.id)
                 continue
             pending.append((cell, assembled))
         return pending
 
     def _catalog_generate_pass(self, record, lora_abs, pending, config, ref_rel,
-                               gen_settings):
+                               gen_settings, *, subdir="catalog.new",
+                               rel_prefix="catalog", stage="3e-catalog",
+                               kind="catalog"):
         """Generate one frame per pending cell (LoRA image model), ALWAYS
         unloading in the finally. Returns a list of (cell, frame_path, rel,
-        seed, assembled) or a structured error dict."""
+        seed, assembled) or a structured error dict. The 3g on-demand path
+        reuses this with cache-staging parameters; ``rel_prefix`` is the
+        FINAL char-relative dir the frame will live in (3e swaps its staging
+        dir whole; 3g moves the single kept frame)."""
         generated = []
         error = None
         try:
@@ -1434,15 +1450,15 @@ class ImageService:
                     break
                 try:
                     frame_path, _ = self._persist_frame(
-                        record, assembled, result, subdir="catalog.new",
-                        prefix="frame", kind="catalog", stage="3e-catalog",
+                        record, assembled, result, subdir=subdir,
+                        prefix="frame", kind=kind, stage=stage,
                         reference=ref_rel)
                 except OSError as exc:
                     error = {"ok": False, "kind": "io",
                              "error": f"could not save a catalog frame: {exc}"}
                     break
                 generated.append((cell, frame_path,
-                                  f"catalog/{frame_path.name}",
+                                  f"{rel_prefix}/{frame_path.name}",
                                   result.request.seed, assembled))
         finally:
             self._engine.unload()
@@ -1452,9 +1468,12 @@ class ImageService:
             return error
         return generated
 
-    def _catalog_cull_pass(self, record, ref_abs, generated, cull_config):
+    def _catalog_cull_pass(self, record, ref_abs, generated, cull_config, *,
+                           on_demand=False, context="image.catalog.frame"):
         """Auto-filter the generated frames with the 3c cull. Returns
-        (passed CatalogEntries, set of failed cells) or a structured error."""
+        (passed CatalogEntries, set of failed cells) or a structured error.
+        The 3g on-demand path reuses this with on_demand=True + its own
+        audit context."""
         try:
             toolkit = self._toolkit_factory(self._settings, ref_abs, False)
         except CullUnavailable as exc:
@@ -1477,7 +1496,7 @@ class ImageService:
                     self._audit.log(
                         "filter_block", layer=2, category=score.content_category,
                         matched=score.content_matched,
-                        context="image.catalog.frame", character_id=record.id)
+                        context=context, character_id=record.id)
                 if score.rejected:
                     # A rejected catalog frame is not shown — drop it and retry
                     # the cell (§7: regenerate rather than show malformed).
@@ -1491,7 +1510,7 @@ class ImageService:
                     frame_bytes = 0
                 passed.append(CatalogEntry(
                     frame_id=frame_path.stem, path=rel, state=cell.state(),
-                    on_demand=False, bytes=frame_bytes))
+                    on_demand=on_demand, bytes=frame_bytes))
         finally:
             toolkit.close()
         return passed, failed_cells
@@ -1708,8 +1727,7 @@ class ImageService:
             # the dead dir died with the swap; a rerun re-links idempotently.
             try:
                 current = self._store.load_catalog(record.id)
-            except (OSError, json.JSONDecodeError, ValueError, TypeError,
-                    LookupError, OverflowError, InvalidId):
+            except ARTIFACT_LOAD_ERRORS:
                 current = None
             if current is None or current.updated_at != token:
                 # The run still did real work (purges audited per-frame as
@@ -1813,8 +1831,7 @@ class ImageService:
         manifest onto ANOTHER character."""
         try:
             manifest = self._store.load_catalog(character_id)
-        except (OSError, json.JSONDecodeError, ValueError, TypeError,
-                LookupError, OverflowError, InvalidId) as exc:
+        except ARTIFACT_LOAD_ERRORS as exc:
             # OverflowError: json.loads accepts Infinity/1e999 as floats and
             # a from_dict int() on one raises it (NOT a ValueError) — the
             # _generation_settings hazard, on the manifest channel.
@@ -1845,6 +1862,511 @@ class ImageService:
                 "error": "the matting model could not be loaded — finish "
                          "`pip install -r requirements-full.txt` on the target "
                          f"machine and place the model file ({exc})"}
+
+    # -- on-demand generation + cache (3g) ----------------------------------------
+
+    def generate_on_demand(self, character_id: object, state: object,
+                           force: object = False) -> dict:
+        """Resolve a requested state (expression/pose/outfit ids) to a frame —
+        the "grow" of §7's seed-plus-grow. A state already covered by a valid
+        seed-catalog or cache frame is served instantly (no models, no GPU);
+        a novel state generates LoRA-steered, runs the SAME 3c auto-filter as
+        3e ("same filter as training", §7), is matted best-effort via the 3f
+        Matter, and caches under ``cache/`` with ``on_demand=True``.
+
+        The caller only picks ids — every prompt fragment comes from the
+        editable states file / option catalog, and the Layer-1 gate re-runs on
+        the assembled cell regardless. ``force=True`` skips the lookup and
+        regenerates, replacing any same-state cache frame (the seed catalog is
+        never touched — a fresh cache frame shadows it, lookup order
+        cache-then-catalog).
+
+        Serving a hit is a read: pixels are re-screened at the next
+        *processing* boundary (the 3f re-screen; the heal path below), not on
+        every read — the 3c/3f stance. The one write a hit can make is
+        bookkeeping (``last_used`` — the §14 LRU signal — and a healed
+        ``matted_path``), saved best-effort behind the 3f optimistic token so
+        it can never clobber a concurrently regenerated manifest and never
+        fails the hit.
+
+        VRAM (§3): generation reuses the 3e passes — the LoRA image model
+        renders, is unloaded in a finally, and ONLY THEN the CPU cull runs;
+        matting is CPU ONNX (zero VRAM). Zero record mutation."""
+        record = self._load_record(character_id)
+        if isinstance(record, dict):
+            return record
+        expressions, poses = catalog_mod.load_catalog_states()
+        cell = catalog_mod.resolve_cell(record, self._catalog(), expressions,
+                                        poses, state)
+        if isinstance(cell, tuple):
+            kind, message = cell
+            return {"ok": False, "kind": kind, "error": message}
+        triple = cell.state()
+
+        cache_manifest = self._load_cache_manifest(record.id)
+        if isinstance(cache_manifest, dict):
+            return cache_manifest
+        catalog_manifest = self._load_catalog_manifest(record.id)
+        if isinstance(catalog_manifest, dict):
+            return catalog_manifest
+
+        if not bool(force):
+            found = self._find_state_frame(record.id, triple, cache_manifest,
+                                           catalog_manifest)
+            if found is not None:
+                source, manifest, entry, src_abs = found
+                token = manifest.updated_at
+                served = self._serve_cached(record, source, manifest, entry,
+                                            src_abs, token)
+                if served is not None:
+                    return served
+                # blocked on the heal re-screen: the frame was purged — the
+                # state is novel again; fall through and regenerate fresh.
+
+        # -- novel state -> generate (mirrors the 3e preconditions) ----------
+        anchor = record.identity
+        if not (anchor.has_lora and anchor.lora_path):
+            return {"ok": False, "kind": "no_lora",
+                    "error": "this character has no trained LoRA — train one "
+                             "first (Stage 3d)"}
+        lora_resolved = self._resolve_reference(record.id, anchor.lora_path,
+                                                allow_absolute=False)
+        if isinstance(lora_resolved, dict):
+            return {"ok": False, "kind": "lora_missing",
+                    "error": "the trained LoRA file is missing on disk"}
+        lora_abs = lora_resolved[0]
+        checkpoint = self._engine.checkpoint_path()
+        if checkpoint is None or not checkpoint.is_file():
+            return {"ok": False, "kind": "engine",
+                    "error": "no image checkpoint configured for on-demand "
+                             "generation"}
+        ref = self._resolve_record_reference(record)
+        if isinstance(ref, dict):
+            return ref  # no_reference / reference_invalid / reference_missing
+        ref_abs, ref_rel = ref
+        missing = cull_mod.preflight_cull(self._settings, False)
+        if missing is not None:
+            return {"ok": False, "kind": missing,
+                    "error": self._cull_missing_message(missing)}
+
+        trigger = self._lora_trigger(record)
+        pending = self._catalog_cell_prompts(record, [cell], trigger,
+                                             context_prefix="image.cache")
+        if not pending:
+            return {"ok": False, "kind": "blocked",
+                    "error": "the requested state was blocked by the content "
+                             "policy"}
+
+        # Reuse the 3e knobs verbatim (§7: the cache is the catalog, grown) —
+        # lora_scale, max_attempts, and the pose-varied face-area relaxation.
+        config = catalog_mod.coerce_catalog_config(self._settings)
+        cull_config = replace(cull_mod.coerce_cull_config(self._settings),
+                              face_area_min=config.face_area_min)
+        gen_settings = self._generation_settings()
+        # Stage into cache.new/ so an in-process failure leaves ZERO orphans
+        # (the 3e staging discipline); only the culled survivor moves into
+        # cache/. A hard kill leaves cache.new/, swept here on the next run.
+        staging = self._store.char_dir(record.id) / "cache.new"
+        self._delete_tree_quietly(staging)
+
+        kept: list[CatalogEntry] = []
+        attempt = 0
+        while not kept and attempt < config.max_attempts:
+            attempt += 1
+            generated = self._catalog_generate_pass(
+                record, lora_abs, pending, config, ref_rel, gen_settings,
+                subdir="cache.new", rel_prefix="cache", stage="3g-cache",
+                kind="cache")
+            if isinstance(generated, dict):
+                self._delete_tree_quietly(staging)
+                return generated  # engine/config/io — nothing cached
+            culled = self._catalog_cull_pass(record, ref_abs, generated,
+                                             cull_config, on_demand=True,
+                                             context="image.cache.frame")
+            if isinstance(culled, dict):
+                self._delete_tree_quietly(staging)
+                return culled  # cull_unavailable / no_faces
+            passed, _failed = culled
+            kept.extend(passed)
+
+        if not kept:
+            self._delete_tree_quietly(staging)
+            return {"ok": False, "kind": "frame_rejected",
+                    "error": "no on-demand frame passed the auto-filter — "
+                             "try again, or retune the LoRA (Stage 3d)"}
+        entry = kept[0]
+
+        # Move the survivor (frame + sidecar) from staging into cache/.
+        frames_dir = self._store.cache_frames_dir(record.id)
+        try:
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            final = self._move_unique(staging / f"{entry.frame_id}.png",
+                                      frames_dir)
+            sidecar = staging / f"{entry.frame_id}.json"
+            if sidecar.is_file():
+                os.replace(sidecar, final.with_suffix(".json"))
+        except OSError as exc:
+            self._delete_tree_quietly(staging)
+            return {"ok": False, "kind": "io",
+                    "error": f"could not store the cached frame: {exc}"}
+        self._delete_tree_quietly(staging)
+        entry.frame_id = final.stem
+        entry.path = f"cache/{final.name}"
+        entry.last_used = _now_iso()
+
+        # Matte best-effort via the 3f Matter (CPU). The pixels were classified
+        # seconds ago by this run's own cull (content-first, fail-closed), so
+        # the fresh frame is NOT re-classified here — unlike the heal path,
+        # where the pixels' age is unbounded. A matte failure never discards
+        # the culled frame; the next hit heals the gap.
+        matte_status = matte_mod.preflight_matte(self._settings)
+        if matte_status is None:
+            mconfig = matte_mod.coerce_matte_config(self._settings)
+            try:
+                toolkit = self._matte_factory(self._settings, mconfig)
+            except MatteUnavailable as exc:
+                matte_status = exc.kind
+            except Exception:
+                matte_status = "matte_unavailable"
+            else:
+                try:
+                    mfinal, matte_status = self._matte_one(
+                        toolkit, final, self._store.cache_matted_dir(record.id),
+                        mconfig)
+                finally:
+                    toolkit.close()
+                if mfinal is not None:
+                    entry.matted_path = f"cache/matted/{mfinal.name}"
+
+        # Record it — RE-load the manifest (fresh, minimal read-modify-write
+        # window), replace any prior same-state cache entries, append.
+        manifest = self._load_cache_manifest(record.id)
+        if isinstance(manifest, dict):
+            self._audit.log("cache_generated", character_id=record.id,
+                            aborted="cache_corrupt", frame_id=entry.frame_id,
+                            state=triple)
+            return manifest  # frame on disk unrecorded; Stage-4 sweep territory
+        if manifest is None:
+            manifest = CatalogManifest(character_id=record.id, entries=[])
+        replaced = self._purge_state_entries(record.id, manifest, triple)
+        manifest.entries.append(entry)
+        manifest.updated_at = _now_iso()
+        try:
+            self._store.save_cache(manifest)
+        except OSError as exc:
+            self._audit.log("cache_generated", character_id=record.id,
+                            aborted="io", frame_id=entry.frame_id, state=triple)
+            return {"ok": False, "kind": "io",
+                    "error": f"could not save the cache manifest: {exc}"}
+
+        self._audit.log("cache_generated", character_id=record.id,
+                        frame_id=entry.frame_id, state=triple,
+                        attempts=attempt, replaced=replaced,
+                        matted=entry.matted_path is not None,
+                        matte_status=matte_status, bytes=entry.bytes)
+        return {"ok": True, "id": record.id, "cached": False,
+                "source": "generated", "frame_id": entry.frame_id,
+                "path": entry.path, "abs_path": str(final),
+                "matted_path": entry.matted_path,
+                "matte_status": matte_status, "state": triple,
+                "attempts": attempt, "replaced": replaced}
+
+    def cache_status(self, character_id: object) -> dict:
+        """Cache frame count / per-state rows (incl. the §14 last_used LRU
+        signal) / matte coverage + readiness — no models, no GPU. A
+        matted_path only counts when it containment-resolves into
+        cache/matted/ (the matte_status stance)."""
+        record = self._load_record(character_id)
+        if isinstance(record, dict):
+            return record
+        manifest = self._load_cache_manifest(record.id)
+        if isinstance(manifest, dict):
+            return manifest
+        missing = matte_mod.preflight_matte(self._settings)
+        ready = missing is None
+        if manifest is None:
+            return {"ok": True, "id": record.id, "has_cache": False,
+                    "frames": 0, "matted": 0, "unmatted": 0, "bytes": 0,
+                    "stale": False, "states": [], "matte_ready": ready,
+                    "matte_missing": missing}
+        matted_dir = self._store.cache_matted_dir(record.id).resolve()
+        matted = 0
+        states: list[dict] = []
+        for entry in manifest.entries:
+            ok_matte = False
+            if entry.matted_path:
+                resolved = self._resolve_reference(record.id, entry.matted_path,
+                                                   allow_absolute=False)
+                if not isinstance(resolved, dict) and resolved[0].parent == matted_dir:
+                    ok_matte = True
+            if ok_matte:
+                matted += 1
+            states.append({"frame_id": entry.frame_id, "state": entry.state,
+                           "matted": ok_matte, "last_used": entry.last_used,
+                           "bytes": entry.bytes})
+        frames = len(manifest.entries)
+        return {"ok": True, "id": record.id, "has_cache": bool(manifest.entries),
+                "frames": frames, "matted": matted, "unmatted": frames - matted,
+                "bytes": manifest.total_bytes(), "stale": manifest.stale,
+                "states": states, "matte_ready": ready, "matte_missing": missing}
+
+    def clear_cache(self, character_id: object) -> dict:
+        """Delete the on-demand cache (frames + mattes + manifest). Evicted
+        states simply regenerate on demand if asked for again (§14)."""
+        record = self._load_record(character_id)
+        if isinstance(record, dict):
+            return record
+        try:
+            removed = self._store.clear_cache(record.id)
+        except OSError as exc:
+            return {"ok": False, "kind": "io",
+                    "error": f"could not clear the cache: {exc}"}
+        self._audit.log("cache_cleared", character_id=record.id)
+        return {"ok": True, "id": record.id, "removed": removed}
+
+    # -- on-demand cache internals ------------------------------------------------
+
+    def _load_cache_manifest(self, character_id: str):
+        """store.load_cache with corrupt/hand-edited manifests mapped to a
+        structured 'cache_corrupt' (mirrors _load_catalog_manifest, including
+        the character_id-mismatch guard — save_cache routes by the manifest's
+        own id)."""
+        try:
+            manifest = self._store.load_cache(character_id)
+        except ARTIFACT_LOAD_ERRORS as exc:
+            return {"ok": False, "kind": "cache_corrupt",
+                    "error": f"the cache manifest is unreadable: {exc}"}
+        if manifest is not None and manifest.character_id != character_id:
+            return {"ok": False, "kind": "cache_corrupt",
+                    "error": "the cache manifest belongs to a different "
+                             "character"}
+        return manifest
+
+    @staticmethod
+    def _state_matches(entry: CatalogEntry, triple: dict) -> bool:
+        state = entry.state if isinstance(entry.state, dict) else {}
+        return all(str(state.get(k)) == v for k, v in triple.items())
+
+    def _find_state_frame(self, record_id, triple, cache_manifest,
+                          catalog_manifest):
+        """The first entry matching the state triple whose pixels pass the 3f
+        residency rule (containment-resolved direct *.png child of its own
+        frames dir), cache before catalog (a forced regeneration shadows the
+        seed frame). A dangling/escaped/hand-edited entry is silently NOT a
+        hit — the state reads as novel. Returns (source, manifest, entry,
+        src_abs) or None."""
+        for source, manifest in (("cache", cache_manifest),
+                                 ("catalog", catalog_manifest)):
+            if manifest is None:
+                continue
+            frames_dir = (self._store.cache_frames_dir(record_id)
+                          if source == "cache"
+                          else self._store.catalog_frames_dir(record_id)).resolve()
+            for entry in manifest.entries:
+                if not self._state_matches(entry, triple):
+                    continue
+                resolved = self._resolve_reference(record_id, entry.path,
+                                                   allow_absolute=False)
+                if isinstance(resolved, dict):
+                    continue
+                src_abs = resolved[0]
+                if src_abs.parent != frames_dir or src_abs.suffix != ".png":
+                    continue
+                return source, manifest, entry, src_abs
+        return None
+
+    def _serve_cached(self, record, source, manifest, entry, src_abs, token):
+        """Serve a state hit. Returns the response dict, or None when the
+        heal re-screen blocked the pixels (frame purged; caller regenerates).
+        Bookkeeping writes (last_used, healed matted_path) are best-effort —
+        they never fail the hit."""
+        matted_dir = (self._store.cache_matted_dir(record.id)
+                      if source == "cache"
+                      else self._store.matted_dir(record.id)).resolve()
+        matte_status = None
+        matte_ok = False
+        if entry.matted_path:
+            prior = self._resolve_reference(record.id, entry.matted_path,
+                                            allow_absolute=False)
+            if not isinstance(prior, dict) and prior[0].parent == matted_dir:
+                matte_ok = True
+        dirty = False
+        if matte_ok:
+            matte_status = "matted"
+        else:
+            healed = self._heal_matte(record, source, manifest, entry,
+                                      src_abs, matted_dir, token)
+            if healed is None:
+                return None  # blocked + purged
+            matte_status = healed
+            matte_ok = matte_status == "matted"
+            dirty = matte_ok
+        if source == "cache":
+            entry.last_used = _now_iso()  # the §14 LRU access signal
+            dirty = True
+        if dirty:
+            self._save_manifest_quietly(record.id, source, manifest, token)
+        return {"ok": True, "id": record.id, "cached": True, "source": source,
+                "frame_id": entry.frame_id, "path": entry.path,
+                "abs_path": str(src_abs),
+                "matted_path": entry.matted_path if matte_ok else None,
+                "matte_status": matte_status, "state": entry.state,
+                "last_used": entry.last_used}
+
+    def _heal_matte(self, record, source, manifest, entry, src_abs,
+                    matted_dir, token):
+        """Fill a missing/invalid matte on an already-cached frame. This IS a
+        processing boundary (3f): the pixels' age is unbounded and the
+        manifest is hand-editable, so the source is re-classified fail-closed
+        first — a blocked frame is purged (pixels + sidecar + matte + entry)
+        + audited, and None is returned so the caller regenerates. Otherwise
+        returns the matte status ('matted' sets entry.matted_path; a
+        missing-model kind or per-frame failure serves the frame unmatted)."""
+        missing = matte_mod.preflight_matte(self._settings)
+        if missing is not None:
+            return missing
+        config = matte_mod.coerce_matte_config(self._settings)
+        try:
+            toolkit = self._matte_factory(self._settings, config)
+        except MatteUnavailable as exc:
+            return exc.kind
+        except Exception:
+            return "matte_unavailable"
+        try:
+            verdict = self._classify(toolkit, src_abs)
+            if verdict.blocked:
+                self._audit.log(
+                    "filter_block", layer=2, category=verdict.category,
+                    matched=verdict.matched, context="image.cache.heal",
+                    character_id=record.id, frame_id=entry.frame_id)
+                self._delete_quietly(src_abs)
+                self._delete_quietly(src_abs.with_suffix(".json"))
+                self._delete_quietly(matted_dir / f"{src_abs.stem}.png")
+                # Purge honors the same trust rule as the skip/serve check
+                # (the 3f purge fix): any recorded matted_path resolving into
+                # matted/ is a live matte of these now-blocked pixels.
+                if entry.matted_path:
+                    prior = self._resolve_reference(record.id, entry.matted_path,
+                                                    allow_absolute=False)
+                    if not isinstance(prior, dict) and prior[0].parent == matted_dir:
+                        self._delete_quietly(prior[0])
+                if entry in manifest.entries:
+                    manifest.entries.remove(entry)
+                self._save_manifest_quietly(record.id, source, manifest, token)
+                return None
+            mfinal, status = self._matte_one(toolkit, src_abs, matted_dir,
+                                             config)
+        finally:
+            toolkit.close()
+        if mfinal is not None:
+            prefix = ("cache/matted" if source == "cache"
+                      else "catalog/matted")
+            entry.matted_path = f"{prefix}/{mfinal.name}"
+        self._audit.log("cache_matted", character_id=record.id, source=source,
+                        frame_id=entry.frame_id, status=status)
+        return status
+
+    def _matte_one(self, toolkit, src_abs, matted_dir, config):
+        """Matte ONE source frame (the 3f per-frame steps d-f: temp namespace
+        no final can carry -> degenerate coverage gate -> atomic promote).
+        Returns (final_path | None, status). Never raises."""
+        try:
+            matted_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None, "matte_failed"
+        for stale in matted_dir.glob("*.png.tmp"):  # crashed-run leftovers
+            self._delete_quietly(stale)
+        final = matted_dir / f"{src_abs.stem}.png"
+        tmp = matted_dir / f"{src_abs.stem}.png.tmp"
+        try:
+            reading = toolkit.matter.matte(src_abs, tmp)
+        except Exception:
+            self._delete_quietly(tmp)
+            return None, "matte_failed"
+        status = matte_mod.evaluate_matte(reading, config)
+        if status is not None:
+            self._delete_quietly(tmp)
+            return None, status
+        try:
+            os.replace(tmp, final)
+        except OSError:
+            self._delete_quietly(tmp)
+            return None, "matte_failed"
+        return final, "matted"
+
+    def _purge_state_entries(self, record_id, manifest, triple) -> int:
+        """Drop every CACHE entry matching the state triple (the new frame
+        replaces it), deleting its artifacts under the same trust rules as
+        the 3f purge (only paths that containment-resolve into cache/ resp.
+        cache/matted/ are touched). Returns the number removed."""
+        frames_dir = self._store.cache_frames_dir(record_id).resolve()
+        matted_dir = self._store.cache_matted_dir(record_id).resolve()
+        removed = 0
+        for entry in list(manifest.entries):
+            if not self._state_matches(entry, triple):
+                continue
+            resolved = self._resolve_reference(record_id, entry.path,
+                                               allow_absolute=False)
+            if not isinstance(resolved, dict) and resolved[0].parent == frames_dir:
+                self._delete_quietly(resolved[0])
+                self._delete_quietly(resolved[0].with_suffix(".json"))
+                self._delete_quietly(matted_dir / f"{resolved[0].stem}.png")
+            if entry.matted_path:
+                prior = self._resolve_reference(record_id, entry.matted_path,
+                                                allow_absolute=False)
+                if not isinstance(prior, dict) and prior[0].parent == matted_dir:
+                    self._delete_quietly(prior[0])
+            manifest.entries.remove(entry)
+            removed += 1
+        return removed
+
+    def _save_manifest_quietly(self, record_id, source, manifest, token) -> bool:
+        """Best-effort bookkeeping save for the serve/heal path — never fails
+        the hit. The 3f optimistic token protects a concurrently swapped
+        manifest from being clobbered by our stale copy; on mismatch or an
+        unreadable/absent current manifest, nothing is written (the pixels on
+        disk are authoritative; the next access re-links idempotently)."""
+        loader = (self._store.load_cache if source == "cache"
+                  else self._store.load_catalog)
+        saver = (self._store.save_cache if source == "cache"
+                 else self._store.save_catalog)
+        try:
+            current = loader(record_id)
+        except ARTIFACT_LOAD_ERRORS:
+            return False
+        if current is None or current.updated_at != token:
+            return False
+        manifest.updated_at = _now_iso()
+        try:
+            saver(manifest)
+        except OSError:
+            return False
+        return True
+
+    @staticmethod
+    def _move_unique(src: Path, dest_dir: Path) -> Path:
+        """Move ``src`` into ``dest_dir`` without ever clobbering an existing
+        file — the _persist_frame O_EXCL discipline applied to a move:
+        reserve a free name atomically, then replace the reservation."""
+        counter = 1
+        while True:
+            name = (src.name if counter == 1
+                    else f"{src.stem}-{counter}{src.suffix}")
+            dest = dest_dir / name
+            try:
+                os.close(os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                break
+            except FileExistsError:
+                counter += 1
+        try:
+            os.replace(src, dest)
+        except BaseException:
+            try:  # do not leave the zero-byte reservation behind
+                os.unlink(dest)
+            except OSError:
+                pass
+            raise
+        return dest
 
     def release_engine(self) -> dict:
         """Unload the pipeline and free the VRAM slot (manual until the
@@ -1887,9 +2409,14 @@ class ImageService:
         except AgeError as exc:
             # Layer 3: a hand-edited record cannot re-enter through this door.
             return {"ok": False, "kind": "age", "error": str(exc)}
-        except (OSError, json.JSONDecodeError, ValueError, OverflowError) as exc:
+        except ARTIFACT_LOAD_ERRORS as exc:
             # Unreadable (AV lock/disk) or corrupt/invalid record file.
-            # OverflowError: a hand-edited Infinity in a footprint int field.
+            # OverflowError: a hand-edited Infinity in a footprint int field;
+            # TypeError/LookupError/AttributeError: non-dict nested values
+            # (e.g. `"identity": "x"`) — the same hand-edit class the manifest
+            # loaders guard. The typed except clauses above run first, so
+            # not_found/blocked/age keep their precise kinds (InvalidId is a
+            # ValueError subclass but is caught by the earlier clause).
             return {"ok": False, "kind": "io",
                     "error": f"could not read character {cid!r}: {exc}"}
 

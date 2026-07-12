@@ -160,6 +160,70 @@ def test_matted_dir_under_catalog(store):
         store.catalog_frames_dir(record.id) / "matted")
 
 
+# -- on-demand cache manifest (Stage 3g) ---------------------------------------
+
+
+def test_cache_manifest_round_trip_and_layout(store):
+    record = make_record()
+    store.save(record)
+    manifest = CatalogManifest(
+        character_id=record.id,
+        entries=[CatalogEntry(
+            frame_id="f1", path="cache/f1.png",
+            state={"expression": "smile", "pose": "sitting", "outfit": "asis"},
+            on_demand=True, bytes=1024, last_used="2026-07-12T00:00:00+00:00")],
+    )
+    path = store.save_cache(manifest)
+    assert path == store.cache_path(record.id)
+    assert path.name == "cache.json"                # sibling of catalog.json
+    assert store.load_catalog(record.id) is None    # never crosses channels
+    loaded = store.load_cache(record.id)
+    assert loaded is not None and loaded.entries[0].on_demand is True
+    assert loaded.entries[0].last_used == "2026-07-12T00:00:00+00:00"
+    assert loaded.to_dict() == manifest.to_dict()
+
+
+def test_cache_entry_last_used_backcompat(store):
+    # last_used is additive: a pre-3g entry (no key) loads as None.
+    entry = CatalogEntry.from_dict({"frame_id": "f", "path": "cache/f.png"})
+    assert entry.last_used is None
+    assert CatalogEntry.from_dict(entry.to_dict()).last_used is None
+
+
+def test_missing_cache_returns_none(store):
+    record = make_record()
+    store.save(record)
+    assert store.load_cache(record.id) is None
+
+
+def test_cache_dirs_are_siblings_of_catalog(store):
+    record = make_record()
+    cdir = store.char_dir(record.id)
+    assert store.cache_frames_dir(record.id) == cdir / "cache"
+    assert store.cache_matted_dir(record.id) == cdir / "cache" / "matted"
+    # deliberately NOT inside catalog/ — a 3e swap must not destroy the cache
+    assert store.catalog_frames_dir(record.id) not in (
+        store.cache_frames_dir(record.id).parents)
+
+
+def test_clear_cache_removes_frames_mattes_and_manifest(store):
+    record = make_record()
+    store.save(record)
+    frames = store.cache_frames_dir(record.id)
+    matted = store.cache_matted_dir(record.id)
+    matted.mkdir(parents=True)
+    (frames / "f1.png").write_bytes(b"x")
+    (matted / "f1.png").write_bytes(b"y")
+    store.save_cache(CatalogManifest(character_id=record.id))
+    assert store.clear_cache(record.id) is True
+    assert not frames.exists() and not store.cache_path(record.id).exists()
+    assert store.clear_cache(record.id) is False  # idempotent
+    # the seed catalog channel is untouched by a cache clear
+    store.save_catalog(CatalogManifest(character_id=record.id))
+    store.clear_cache(record.id)
+    assert store.load_catalog(record.id) is not None
+
+
 # -- footprint ----------------------------------------------------------------
 
 
@@ -173,8 +237,11 @@ def test_measure_footprint(store):
     (cdir / "catalog" / "f1.png").write_bytes(b"y" * 300)
     (cdir / "cache").mkdir(parents=True)
     (cdir / "cache" / "f2.png").write_bytes(b"z" * 100)
+    # 3g mattes live under cache/matted/ and count as cache_bytes (rglob)
+    (cdir / "cache" / "matted").mkdir(parents=True)
+    (cdir / "cache" / "matted" / "f2.png").write_bytes(b"m" * 50)
     fp = store.measure_footprint(record.id)
     assert fp.lora_bytes == 500
     assert fp.catalog_bytes == 300
-    assert fp.cache_bytes == 100
-    assert fp.total_bytes == 900
+    assert fp.cache_bytes == 150
+    assert fp.total_bytes == 950

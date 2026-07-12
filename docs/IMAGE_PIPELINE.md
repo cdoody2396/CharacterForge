@@ -882,7 +882,171 @@ On the 16 GB target machine (after the 3e checklist passes):
 
 Result feeds the BUILD_PLAN hardware-validation flag for 3f.
 
-## 18. KNOWN LIMITS (restating §16 for the image side)
+## 18. STAGE 3G — ON-DEMAND GENERATION + CACHE (§7)
+
+The "grow" of §7's seed-plus-grow: a requested state already covered by a
+valid seed-catalog or cache frame is served **instantly** (no models, no
+GPU); a novel state generates LoRA-steered, runs the **same 3c auto-filter**
+as 3e ("same filter as training", §7), is matted best-effort via the 3f
+`Matter`, and caches under `cache/` with `on_demand=true`. Stage 6e's
+avatar-frame selection consumes this surface (state → frame; miss →
+generate); Stage 4's LRU cap + footprint management consume its metadata.
+
+### Flow (`ImageService` + 3 bridges)
+
+1. `image_generate_on_demand(id, state, force=False)` — `state` is a full
+   `{expression, pose, outfit}` id triple. Hit → served from cache-then-
+   catalog (a forced regeneration shadows the seed frame); miss → generate +
+   cull + matte + cache. `force=True` skips the lookup and regenerates,
+   replacing any same-state **cache** entry (the seed catalog is never
+   touched).
+2. `image_cache_status(id)` — frames / per-state rows (incl. `last_used`) /
+   matte coverage + readiness. No GPU.
+3. `image_clear_cache(id)` — delete `cache/` + `cache.json`; evicted states
+   regenerate on demand if asked for again (§14).
+
+### The state vocabulary (ids only — no prompt injection surface)
+
+The caller picks **ids**; every prompt fragment comes from the editable
+states file / the option catalog, never from the bridge (and the Layer-1
+gate re-runs on the assembled cell regardless). `resolve_cell`
+(`app/imagegen/catalog.py`) enforces the creator-payload strictness: exactly
+the three keys, all non-empty strings — a malformed shape is `invalid`, an
+unknown id is `unknown_state`. `expression`/`pose` must exist in
+`data/catalog_states.json` (so dropping in new states extends the on-demand
+space with no code change, §15); `outfit` must be one of the record's
+wardrobe selections or the literal `asis` (render the base look — always
+valid, even when a wardrobe exists). The novel-state space = every valid
+triple the capped 3e matrix did not pre-render, plus anything added to the
+states file later.
+
+### Serving vs processing (the 3c/3f re-screen stance)
+
+Serving a hit is a **read**: like `bootstrap_status`/`catalog_status`, it
+does not re-classify pixels — re-screening happens at every *processing*
+boundary. A hit only counts when the entry's path containment-resolves to a
+direct `*.png` child of its own frames dir (the 3f residency rule); a
+dangling/escaped/hand-edited entry silently reads as novel. The one
+processing a hit can trigger is the **heal** path: a hit whose matte is
+missing/invalid (e.g. matted before the matting model was placed, or a 3f
+coverage trip) is re-matted on access — and because those pixels' age is
+unbounded and the manifest hand-editable, the heal **re-classifies the
+source fail-closed first** (a classify exception is a block). A blocked
+frame is purged (pixels + sidecar + matte + manifest entry, under the 3f
+purge trust rules) + audited (`filter_block`, layer 2, context
+`image.cache.heal`), and the run falls through to fresh generation. A fresh
+3g frame is NOT re-classified before its same-run matte: the cull
+content-classified those exact pixels seconds earlier (content-first,
+fail-closed) — unlike 3f, where source age is unbounded.
+
+### Generation (reuses the 3e machinery verbatim)
+
+Preconditions mirror 3e: trained LoRA (3d) + reference (similarity cull) +
+checkpoint + `preflight_cull` — all checked BEFORE any GPU work. The single
+cell rides the parameterized 3e passes: generate (engine catalog mode,
+`image_gen.catalog.lora_scale`) → **unload in a finally** (§3) → CPU cull
+(`image_gen.catalog.face_area_min` relaxation; Layer-2 gate + similarity at
+the 3c values) → retry up to `image_gen.catalog.max_attempts`; nothing
+surviving is a structured `frame_rejected`. **No separate 3g knobs** — the
+cache is the catalog, grown. Frames stage in `cache.new/` (an in-process
+failure leaves zero orphans; a hard kill leaves only a swept-on-next-run
+staging dir), and only the culled survivor moves into `cache/` (O_EXCL
+name reservation — never clobbers). Sidecar `stage: 3g-cache`,
+`kind: cache`.
+
+A matte failure/degenerate-trip never discards the culled frame — it caches
+unmatted (`matte_status` reports why) and the next hit heals the gap.
+
+### The cache manifest (`cache.json`)
+
+Reuses the `CatalogManifest` shape at `characters/<id>/cache.json`; entries
+carry `on_demand=true` + **`last_used`** (additive field — the §14 LRU
+signal, stamped at creation and on every cache hit; seed-catalog entries
+leave it null; eviction itself is Stage 4). At most one cache entry per
+state triple: a replacement (force, or regen after a heal purge) deletes the
+prior frame + sidecar + matte under the purge trust rules. Bookkeeping
+writes on the serve path (last_used, healed matted_path) ride the 3f
+**optimistic token** and are best-effort: on a token mismatch / unreadable
+current manifest / save error nothing is written and the hit still serves —
+pixels on disk are authoritative and the next access re-links idempotently.
+A manifest whose `character_id` mismatches is `cache_corrupt` (`save_cache`
+routes by the manifest's own id, the 3f hazard).
+
+Top-level kinds: `invalid` | `unknown_state` | `cache_corrupt` |
+`catalog_corrupt` | `no_lora` | `lora_missing` | `engine` | `config` |
+`no_reference` | `reference_invalid` | `reference_missing` |
+`face_models_missing` | `classifier_unavailable` | `cull_unavailable` |
+`no_faces` | `frame_rejected` | `blocked` (a Layer-1-blocked cell prompt, or
+a blocked stored record at load) | `io` (+ the record-load kinds
+`not_found` / `age`). Matte outcomes are NOT top-level (best-effort): the ok
+result's `matte_status` carries `matted` / `matte_failed` / `matte_empty` /
+`matte_full` / `matting_model_missing` / `classifier_unavailable` /
+`matte_unavailable`.
+
+### Output
+
+```
+data/characters/<id>/cache/frame-<utc>-<seed>.png (+ .json sidecar)
+                     /cache/matted/<frame-stem>.png   # RGBA, straight alpha
+                     /cache.json    # CatalogManifest shape; on_demand=true,
+                                    #   last_used per entry
+```
+
+`cache/` is deliberately a **sibling** of `catalog/` (not inside it): a 3e
+regeneration swap replaces the seed catalog but the grown cache survives it
+(same LoRA, same filter — still valid), `footprint.cache_bytes` counts it
+separately (§14's management view), and `clear_cache`/Stage-4 LRU manage it
+independently. Zero record mutation; the engine gains nothing (the 3e
+catalog mode is reused as-is). Layer-4 events: `cache_generated` (state +
+attempts + replaced + matte outcome; `aborted=<kind>` on a post-generation
+abort), `cache_matted` (heal outcomes), `cache_cleared`, plus
+`filter_block` per cull reject / heal purge.
+
+Known crash window (accepted, mirrors 3c/3e): the survivor move + manifest
+save are separate steps — a hard kill between them leaves an orphan frame
+pair in `cache/` (footprint-counted, invisible to lookup). The Stage-4
+startup reconciliation sweep (deferred item) covers it alongside the
+bootstrap-candidates and `catalog.old` orphans.
+
+## 19. HARDWARE VALIDATION — 3G CHECKLIST (pending)
+
+On the target machine (after the 3a–3f checklists pass, with the live
+end-to-end character):
+
+1. `image_generate_on_demand` with a novel triple (e.g. an expression ×
+   pose combination the capped 3e matrix skipped) → generates LoRA-steered,
+   culls (task-manager: the image model **unloads** before the cull), mattes
+   (CPU), lands `cache/frame-*.png` + `cache/matted/*.png` + `cache.json`
+   with `on_demand=true` + `last_used`. Single window, no console.
+2. **Instant hit:** repeat the same triple → served with `cached=true`,
+   `source="cache"`, **no model loads** (sub-second), `last_used` bumped.
+   A triple the seed catalog covers → `source="catalog"`, equally instant.
+3. **Identity + gates hold:** the cached frame is the same character by eye
+   (CCIP similarity ≥ floor logged in the cull) and unambiguously adult;
+   `filter_block` audits fire on any reject.
+4. **Heal:** delete one cache matte file → next hit re-classifies + re-mattes
+   it (audit `cache_matted`), fills `matted_path` back in.
+5. **force=True** replaces the same-state cache frame (old frame + sidecar +
+   matte gone, one entry per state) and shadows a catalog-covered state.
+6. **frame_rejected path:** with a deliberately hostile state (or a
+   tightened similarity floor override at the settings level), confirm the
+   structured `frame_rejected` after `max_attempts`, nothing cached, prior
+   cache intact.
+7. **Unknown vocabulary:** an unknown expression id → structured
+   `unknown_state`; a drop-in edit to `data/catalog_states.json` makes the
+   new id generable with no code change (§15).
+8. **3e regen survival:** re-run `image_generate_catalog` → the cache
+   survives the swap (sibling dir) and its frames still serve; footprint
+   shows `cache_bytes` separately from `catalog_bytes`.
+9. **Offline:** socket-blocked end-to-end on-demand run (generate → cull →
+   matte) completes fully offline.
+10. **Crash posture:** kill mid-generation → `cache.new/` staging swept on
+    the next run; a kill between move and manifest-save leaves one orphan
+    pair (the documented Stage-4 sweep item), nothing served corrupt.
+
+Result feeds the BUILD_PLAN hardware-validation flag for 3g.
+
+## 20. KNOWN LIMITS (restating §16 for the image side)
 
 - Categorical anatomy renders reliably; fine dimensional precision does not
   (§12) — the pipeline never promises it.

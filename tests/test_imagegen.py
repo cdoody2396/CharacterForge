@@ -2722,3 +2722,609 @@ def test_pin_hf_offline_gated_on_pipeline_config_dir(settings, monkeypatch):
     pin_hf_offline(settings)
     assert os.environ["HF_HUB_OFFLINE"] == "1"
     assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
+
+
+# ============================================================================
+# Stage 3g — on-demand generation + cache (state -> frame; the "grow" of §7)
+# ============================================================================
+
+from app.imagegen import MatteReading, MatteToolkit, MatteUnavailable  # noqa: E402
+from app.model import CatalogEntry, CatalogManifest  # noqa: E402
+
+
+class CacheMatteFactory:
+    """Minimal matte-toolkit fake for the 3g flows: the matter writes RGBA
+    bytes, the classifier is outcome-driven (keyed by source basename in
+    first-seen order, like FakeMatteFactory), and both call counts are
+    recorded so tests can assert fresh-frame-no-classify vs heal-classify."""
+
+    def __init__(self, outcomes=None, *, raise_kind=None, raise_exc=None):
+        self.outcomes = list(outcomes or [])
+        self.raise_kind = raise_kind
+        self.raise_exc = raise_exc
+        self._order: dict = {}
+        self.built = 0
+        self.matte_calls = 0
+        self.classify_calls = 0
+
+    def _outcome(self, path):
+        key = Path(path).name
+        if key not in self._order:
+            self._order[key] = len(self._order)
+        idx = self._order[key]
+        return self.outcomes[idx] if idx < len(self.outcomes) else {}
+
+    def __call__(self, settings, config):
+        if self.raise_kind:
+            raise MatteUnavailable(self.raise_kind)
+        if self.raise_exc is not None:
+            raise self.raise_exc
+        self.built += 1
+        factory = self
+
+        class _M:
+            def matte(self, src, out):
+                factory.matte_calls += 1
+                o = factory._outcome(src)
+                if o.get("matte_raise"):
+                    raise RuntimeError("matte boom")
+                Path(out).write_bytes(b"RGBA")
+                return MatteReading(coverage=o.get("coverage", 0.5),
+                                    mean_alpha=0.4)
+
+        class _C:
+            def classify(self, p):
+                factory.classify_calls += 1
+                o = factory._outcome(p)
+                if o.get("blocked"):
+                    return ContentVerdict(blocked=True, category="minors",
+                                          matched="loli")
+                return ContentVerdict(blocked=False)
+
+        return MatteToolkit(matter=_M(), classifier=_C(), closer=None)
+
+
+@pytest.fixture()
+def matting_model(tmp_path, settings) -> Path:
+    """A fake user-placed matting model so preflight_matte passes (the
+    classifier dir arrives via cull_models)."""
+    model = tmp_path / "models" / "isnet-anime.onnx"
+    model.parent.mkdir(parents=True, exist_ok=True)
+    model.write_bytes(b"\0" * 8)
+    settings.set("models.image.matting_model_path", str(model))
+    return model
+
+
+def cache_service(creator, settings, audit, fake_engine, cull_factory,
+                  matte_factory=None):
+    return ImageService(
+        creator.store, settings, audit,
+        catalog_provider=lambda: creator.catalog,
+        engine=fake_engine, toolkit_factory=cull_factory,
+        matte_factory=matte_factory or CacheMatteFactory(),
+    )
+
+
+STATE = {"expression": "smile", "pose": "sitting", "outfit": "fantasy_armor"}
+
+
+def _engine_requests(fake_engine) -> int:
+    return sum(len(b.requests) for b in fake_engine.factory.backends)
+
+
+# -- generate (novel state) ---------------------------------------------------
+
+
+def test_on_demand_generates_culls_mattes_and_caches(
+        creator, settings, audit, fake_engine, cull_models, matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    matte_factory = CacheMatteFactory()
+    service = cache_service(creator, settings, audit, fake_engine,
+                            cull_factory, matte_factory)
+    record = _catalog_ready(creator)
+
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True
+    assert res["cached"] is False and res["source"] == "generated"
+    assert res["state"] == STATE and res["attempts"] == 1
+    assert res["path"].startswith("cache/")
+    assert res["matted_path"] == "cache/matted/" + res["frame_id"] + ".png"
+    assert res["matte_status"] == "matted"
+
+    cdir = creator.store.char_dir(record.id)
+    frame = cdir / res["path"]
+    assert frame.is_file() and Path(res["abs_path"]) == frame.resolve()
+    sidecar = json.loads(frame.with_suffix(".json").read_text(encoding="utf-8"))
+    assert sidecar["stage"] == "3g-cache" and sidecar["kind"] == "cache"
+    assert (cdir / res["matted_path"]).is_file()
+    assert not (cdir / "cache.new").exists()          # staging swept
+
+    manifest = creator.store.load_cache(record.id)
+    assert manifest is not None and len(manifest.entries) == 1
+    entry = manifest.entries[0]
+    assert entry.on_demand is True and entry.last_used
+    assert entry.state == STATE and entry.bytes > 0
+    # the LoRA-steered cell prompt = trigger + the state fragments
+    reqs = [r for b in fake_engine.factory.backends for r in b.requests]
+    assert any("cfid" in r.positive and "gentle smile" in r.positive
+               and "sitting" in r.positive for r in reqs)
+    # VRAM: slot free; the cull toolkit built AFTER the image unload; the
+    # fresh frame was matted WITHOUT a redundant classify (same-run pixels)
+    assert settings.get("models.active") is None
+    assert cull_factory.active_at_build == [None]
+    assert matte_factory.matte_calls == 1 and matte_factory.classify_calls == 0
+    assert any(e["kind"] == "cache_generated" for e in audit_events(audit))
+
+
+def test_on_demand_instant_hit_from_cache(creator, settings, audit, fake_engine,
+                                          cull_models, matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    first = service.generate_on_demand(record.id, dict(STATE))
+    assert first["ok"] is True
+    gen_count = _engine_requests(fake_engine)
+    builds = cull_factory.built
+
+    # age the LRU stamp so the bump is observable at second granularity
+    manifest = creator.store.load_cache(record.id)
+    manifest.entries[0].last_used = "2020-01-01T00:00:00+00:00"
+    creator.store.save_cache(manifest)
+
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True and res["cached"] is True
+    assert res["source"] == "cache" and res["frame_id"] == first["frame_id"]
+    assert res["matted_path"] == first["matted_path"]
+    assert _engine_requests(fake_engine) == gen_count   # no generation
+    assert cull_factory.built == builds                 # no cull models
+    stored = creator.store.load_cache(record.id).entries[0]
+    assert stored.last_used > "2020-01-01"              # LRU signal bumped
+
+
+def test_on_demand_hit_from_catalog_without_matting(creator, settings, audit,
+                                                    fake_engine, cull_models):
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory())
+    record = _catalog_ready(creator)
+    frames_dir = creator.store.catalog_frames_dir(record.id)
+    frames_dir.mkdir(parents=True)
+    (frames_dir / "frame-1.png").write_bytes(b"PNG1")
+    creator.store.save_catalog(CatalogManifest(
+        character_id=record.id,
+        entries=[CatalogEntry(frame_id="frame-1", path="catalog/frame-1.png",
+                              state=dict(STATE), on_demand=False, bytes=4)],
+        updated_at="2025-12-31T00:00:00+00:00"))
+
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True and res["cached"] is True
+    assert res["source"] == "catalog"
+    # matting unconfigured: served unmatted with the precise reason
+    assert res["matted_path"] is None
+    assert res["matte_status"] == "matting_model_missing"
+    assert _engine_requests(fake_engine) == 0
+    # a catalog hit is not LRU-tracked and wrote nothing
+    stored = creator.store.load_catalog(record.id)
+    assert stored.updated_at == "2025-12-31T00:00:00+00:00"
+    assert stored.entries[0].last_used is None
+
+
+def test_on_demand_hit_heals_missing_matte(creator, settings, audit,
+                                           fake_engine, cull_models,
+                                           matting_model):
+    matte_factory = CacheMatteFactory()
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory(), matte_factory)
+    record = _catalog_ready(creator)
+    frames_dir = creator.store.catalog_frames_dir(record.id)
+    frames_dir.mkdir(parents=True)
+    (frames_dir / "frame-1.png").write_bytes(b"PNG1")
+    creator.store.save_catalog(CatalogManifest(
+        character_id=record.id,
+        entries=[CatalogEntry(frame_id="frame-1", path="catalog/frame-1.png",
+                              state=dict(STATE), on_demand=False, bytes=4)],
+        updated_at="2025-12-31T00:00:00+00:00"))
+
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True and res["cached"] is True
+    assert res["matte_status"] == "matted"
+    assert res["matted_path"] == "catalog/matted/frame-1.png"
+    # heal IS a processing boundary: classified fail-closed before matting
+    assert matte_factory.classify_calls == 1 and matte_factory.matte_calls == 1
+    assert (creator.store.matted_dir(record.id) / "frame-1.png").is_file()
+    stored = creator.store.load_catalog(record.id)
+    assert stored.entries[0].matted_path == "catalog/matted/frame-1.png"
+    assert any(e["kind"] == "cache_matted" and e["status"] == "matted"
+               for e in audit_events(audit))
+
+
+def test_on_demand_heal_blocked_purges_and_regenerates(
+        creator, settings, audit, fake_engine, cull_models, matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    matte_factory = CacheMatteFactory()
+    service = cache_service(creator, settings, audit, fake_engine,
+                            cull_factory, matte_factory)
+    record = _catalog_ready(creator)
+    first = service.generate_on_demand(record.id, dict(STATE))
+    assert first["ok"] is True
+
+    # hand-strip the matte + block the OLD frame's pixels on re-screen
+    cdir = creator.store.char_dir(record.id)
+    (cdir / first["matted_path"]).unlink()
+    manifest = creator.store.load_cache(record.id)
+    manifest.entries[0].matted_path = None
+    creator.store.save_cache(manifest)
+    matte_factory.outcomes = [{"blocked": True}]  # first-seen = the old frame
+
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True
+    assert res["cached"] is False and res["source"] == "generated"
+    assert res["frame_id"] != first["frame_id"]
+    assert not (cdir / first["path"]).exists()          # purged pixels
+    manifest = creator.store.load_cache(record.id)
+    assert len(manifest.entries) == 1                    # replaced, not appended
+    assert manifest.entries[0].frame_id == res["frame_id"]
+    blocks = [e for e in audit_events(audit)
+              if e["kind"] == "filter_block"
+              and e.get("context") == "image.cache.heal"]
+    assert len(blocks) == 1 and blocks[0]["layer"] == 2
+
+
+def test_on_demand_force_replaces_same_state(creator, settings, audit,
+                                             fake_engine, cull_models,
+                                             matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 8)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    first = service.generate_on_demand(record.id, dict(STATE))
+    res = service.generate_on_demand(record.id, dict(STATE), force=True)
+    assert res["ok"] is True and res["cached"] is False
+    assert res["replaced"] == 1 and res["frame_id"] != first["frame_id"]
+    cdir = creator.store.char_dir(record.id)
+    assert not (cdir / first["path"]).exists()
+    assert not (cdir / first["path"]).with_suffix(".json").exists()
+    assert not (cdir / first["matted_path"]).exists()
+    manifest = creator.store.load_cache(record.id)
+    assert [e.frame_id for e in manifest.entries] == [res["frame_id"]]
+
+
+def test_on_demand_frame_rejected_after_attempts(creator, settings, audit,
+                                                 fake_engine, cull_models,
+                                                 matting_model):
+    # every render is off-model -> rejected -> retried -> structured refusal
+    cull_factory = FakeToolkitFactory(outcomes=[{"similarity": 0.1}] * 8)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is False and res["kind"] == "frame_rejected"
+    cdir = creator.store.char_dir(record.id)
+    assert not (cdir / "cache.new").exists()
+    cache_dir = cdir / "cache"
+    assert not cache_dir.exists() or not list(cache_dir.glob("*.png"))
+    assert creator.store.load_cache(record.id) is None
+    assert cull_factory.built == 2  # max_attempts default
+
+
+def test_on_demand_content_block_audits_and_retries(creator, settings, audit,
+                                                    fake_engine, cull_models,
+                                                    matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{"blocked": True}, {}])
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True and res["attempts"] == 2
+    blocks = [e for e in audit_events(audit)
+              if e["kind"] == "filter_block"
+              and e.get("context") == "image.cache.frame"]
+    assert len(blocks) == 1 and blocks[0]["layer"] == 2
+
+
+def test_on_demand_state_validation_kinds(creator, settings, audit,
+                                          fake_engine, cull_models):
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory())
+    record = _catalog_ready(creator)
+    assert service.generate_on_demand(record.id, "nope")["kind"] == "invalid"
+    assert service.generate_on_demand(record.id, {})["kind"] == "invalid"
+    bad = dict(STATE)
+    bad["expression"] = "unknown-expr"
+    assert service.generate_on_demand(record.id, bad)["kind"] == "unknown_state"
+    assert service.generate_on_demand("nope", dict(STATE))["kind"] == "not_found"
+    assert service.generate_on_demand("", dict(STATE))["kind"] == "invalid"
+
+
+def test_on_demand_precondition_kinds(creator, settings, audit, fake_engine,
+                                      cull_models):
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory())
+    # no LoRA at all
+    record = saved_record(creator)
+    assert service.generate_on_demand(record.id, dict(STATE))["kind"] == "no_lora"
+    # LoRA flagged but the file is gone
+    ready = _catalog_ready(creator)
+    (creator.store.char_dir(ready.id) / "lora" / "identity.safetensors").unlink()
+    assert service.generate_on_demand(
+        ready.id, dict(STATE))["kind"] == "lora_missing"
+    # reference gone
+    ready2 = _catalog_ready(creator)
+    (creator.store.char_dir(ready2.id) / "reference" / "ref.png").unlink()
+    assert service.generate_on_demand(
+        ready2.id, dict(STATE))["kind"] == "reference_missing"
+
+
+def test_on_demand_cull_models_missing(creator, settings, audit, fake_engine):
+    # no cull_models fixture -> preflight fails BEFORE any GPU work
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory())
+    record = _catalog_ready(creator)
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is False
+    assert res["kind"] in ("face_models_missing", "classifier_unavailable")
+    assert _engine_requests(fake_engine) == 0
+
+
+def test_on_demand_matte_failure_still_caches_then_heals(
+        creator, settings, audit, fake_engine, cull_models, matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    matte_factory = CacheMatteFactory(outcomes=[{"matte_raise": True}])
+    service = cache_service(creator, settings, audit, fake_engine,
+                            cull_factory, matte_factory)
+    record = _catalog_ready(creator)
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True                     # matte is best-effort
+    assert res["matted_path"] is None
+    assert res["matte_status"] == "matte_failed"
+    entry = creator.store.load_cache(record.id).entries[0]
+    assert entry.matted_path is None
+
+    # the next hit heals the gap (classify + matte now succeed)
+    matte_factory.outcomes = []
+    res2 = service.generate_on_demand(record.id, dict(STATE))
+    assert res2["ok"] is True and res2["cached"] is True
+    assert res2["matte_status"] == "matted"
+    stored = creator.store.load_cache(record.id).entries[0]
+    assert stored.matted_path == res2["matted_path"]
+
+
+def test_on_demand_dangling_cache_entry_reads_as_novel(
+        creator, settings, audit, fake_engine, cull_models, matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 8)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    first = service.generate_on_demand(record.id, dict(STATE))
+    (creator.store.char_dir(record.id) / first["path"]).unlink()  # dangle it
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True and res["cached"] is False
+    assert res["replaced"] == 1                  # the dead entry was dropped
+    assert len(creator.store.load_cache(record.id).entries) == 1
+
+
+def test_on_demand_corrupt_cache_manifest(creator, settings, audit,
+                                          fake_engine, cull_models):
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory())
+    record = _catalog_ready(creator)
+    creator.store.cache_path(record.id).write_text("{not json",
+                                                   encoding="utf-8")
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is False and res["kind"] == "cache_corrupt"
+    assert service.cache_status(record.id)["kind"] == "cache_corrupt"
+    # a manifest claiming ANOTHER character is corrupt too (save_cache routes
+    # by the manifest's own id)
+    other = CatalogManifest(character_id="someoneelse")
+    creator.store.cache_path(record.id).write_text(
+        json.dumps(other.to_dict()), encoding="utf-8")
+    assert service.cache_status(record.id)["kind"] == "cache_corrupt"
+
+
+def test_cache_survives_a_catalog_regeneration(creator, settings, audit,
+                                               fake_engine, cull_models,
+                                               matting_model):
+    _small_matrix(settings)
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 8)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    cached = service.generate_on_demand(record.id, dict(STATE))
+    assert cached["ok"] is True
+    assert service.generate_catalog(record.id)["ok"] is True  # 3e swap
+    # the grown cache is a sibling: it survives the swap and still serves
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True and res["cached"] is True
+    assert res["source"] == "cache" and res["frame_id"] == cached["frame_id"]
+
+
+# -- cache_status / clear_cache ------------------------------------------------
+
+
+def test_cache_status_and_clear(creator, settings, audit, fake_engine,
+                                cull_models, matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    empty = service.cache_status(record.id)
+    assert empty == {"ok": True, "id": record.id, "has_cache": False,
+                     "frames": 0, "matted": 0, "unmatted": 0, "bytes": 0,
+                     "stale": False, "states": [], "matte_ready": True,
+                     "matte_missing": None}
+    service.generate_on_demand(record.id, dict(STATE))
+    st = service.cache_status(record.id)
+    assert st["has_cache"] is True and st["frames"] == 1
+    assert st["matted"] == 1 and st["unmatted"] == 0 and st["bytes"] > 0
+    row = st["states"][0]
+    assert row["state"] == STATE and row["matted"] is True and row["last_used"]
+    cleared = service.clear_cache(record.id)
+    assert cleared["ok"] is True and cleared["removed"] is True
+    assert service.cache_status(record.id)["has_cache"] is False
+    assert not creator.store.cache_frames_dir(record.id).exists()
+    assert any(e["kind"] == "cache_cleared" for e in audit_events(audit))
+
+
+def test_cache_status_matted_path_must_resolve_into_cache_matted(
+        creator, settings, audit, fake_engine, cull_models, matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    service.generate_on_demand(record.id, dict(STATE))
+    manifest = creator.store.load_cache(record.id)
+    manifest.entries[0].matted_path = "../../../evil.png"   # hand-edit
+    creator.store.save_cache(manifest)
+    st = service.cache_status(record.id)
+    assert st["matted"] == 0 and st["unmatted"] == 1        # counts UNMATTED
+
+
+# -- 3g internals ---------------------------------------------------------------
+
+
+def test_save_manifest_quietly_token_mismatch_never_clobbers(
+        creator, settings, audit, fake_engine, cull_models, matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    service.generate_on_demand(record.id, dict(STATE))
+    manifest = creator.store.load_cache(record.id)
+    before = creator.store.cache_path(record.id).read_text(encoding="utf-8")
+    # a stale token (someone else saved since) must write NOTHING
+    ok = service._save_manifest_quietly(record.id, "cache", manifest,
+                                        "1999-01-01T00:00:00+00:00")
+    assert ok is False
+    assert creator.store.cache_path(record.id).read_text(
+        encoding="utf-8") == before
+    # the matching token writes
+    ok = service._save_manifest_quietly(record.id, "cache", manifest,
+                                        manifest.updated_at)
+    assert ok is True
+
+
+def test_move_unique_never_clobbers(tmp_path, images):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir()
+    (dest_dir / "frame-1.png").write_bytes(b"KEEP")
+    (src_dir / "frame-1.png").write_bytes(b"NEW")
+    moved = images._move_unique(src_dir / "frame-1.png", dest_dir)
+    assert moved.name == "frame-1-2.png"
+    assert (dest_dir / "frame-1.png").read_bytes() == b"KEEP"
+    assert moved.read_bytes() == b"NEW"
+
+
+def test_on_demand_blocked_cell_prompt(creator, settings, audit, fake_engine,
+                                       cull_models, monkeypatch):
+    # a states drop-in whose fragment trips the Layer-1 prompt gate: the cell
+    # is blocked + audited, nothing generates
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory())
+    record = _catalog_ready(creator)
+    fake_states = ([catalog_mod.CatalogState("evil", "young girl")],
+                   [catalog_mod.CatalogState("sitting", "sitting")])
+    monkeypatch.setattr(catalog_mod, "load_catalog_states",
+                        lambda: fake_states)
+    res = service.generate_on_demand(
+        record.id, {"expression": "evil", "pose": "sitting",
+                    "outfit": "fantasy_armor"})
+    assert res["ok"] is False and res["kind"] == "blocked"
+    assert _engine_requests(fake_engine) == 0
+    assert any(e["kind"] == "filter_block" and e["layer"] == 1
+               and str(e.get("context", "")).startswith("image.cache.")
+               for e in audit_events(audit))
+
+
+def test_on_demand_zero_record_mutation(creator, settings, audit, fake_engine,
+                                        cull_models, matting_model):
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    before = creator.store.record_path(record.id).read_bytes()
+    service.generate_on_demand(record.id, dict(STATE))
+    service.generate_on_demand(record.id, dict(STATE))  # and the hit path
+    assert creator.store.record_path(record.id).read_bytes() == before
+
+
+# -- Stage 3g review-pass regressions ------------------------------------------
+
+
+def test_non_dict_manifest_entries_never_raise_through_the_bridge(
+        creator, settings, audit, fake_engine, cull_models):
+    # Review HIGH: CatalogEntry.from_dict's last_used read ran .get before
+    # the ["frame_id"] subscript, so a non-dict entry (a natural hand-edit:
+    # "entries": [null]) raised AttributeError — in NO loader guard tuple —
+    # straight through every manifest bridge (3e catalog_status, 3f
+    # matte_status, and all of 3g). Now: structured *_corrupt, every channel.
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory())
+    record = _catalog_ready(creator)
+    for entries in ([None], ["x"], [[1]], [5, "x"], "xx", {"oops": 1}):
+        blob = json.dumps({"schema_version": 1, "character_id": record.id,
+                           "stale": False, "matting": None,
+                           "updated_at": "2026-01-01T00:00:00+00:00",
+                           "entries": entries})
+        creator.store.cache_path(record.id).write_text(blob, encoding="utf-8")
+        assert service.cache_status(record.id)["kind"] == "cache_corrupt", entries
+        assert service.generate_on_demand(
+            record.id, dict(STATE))["kind"] == "cache_corrupt", entries
+        creator.store.cache_path(record.id).unlink()
+        creator.store.catalog_path(record.id).write_text(blob, encoding="utf-8")
+        assert service.catalog_status(record.id)["kind"] == "catalog_corrupt", entries
+        assert service.matte_status(record.id)["kind"] == "catalog_corrupt", entries
+        assert service.generate_on_demand(
+            record.id, dict(STATE))["kind"] == "catalog_corrupt", entries
+        creator.store.catalog_path(record.id).unlink()
+
+
+def test_deeply_nested_manifest_is_corrupt_not_a_recursion_crash(
+        creator, settings, audit, fake_engine, cull_models):
+    # Red-team LOW: json.loads raises RecursionError on pathological nesting,
+    # which escaped every loader guard. Now in ARTIFACT_LOAD_ERRORS.
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory())
+    record = _catalog_ready(creator)
+    creator.store.cache_path(record.id).write_text("[" * 6000 + "]" * 6000,
+                                                   encoding="utf-8")
+    assert service.cache_status(record.id)["kind"] == "cache_corrupt"
+    creator.store.cache_path(record.id).unlink()
+
+
+def test_hand_edited_nonfinite_state_stays_json_safe(
+        creator, settings, audit, fake_engine, cull_models, matting_model):
+    # Red-team MEDIUM: an Infinity/NaN value in a hand-edited entry `state`
+    # rode verbatim into the cache_status / serve-hit payloads — json.dumps
+    # emits bare Infinity (invalid JSON) and the JS promise hangs. from_dict
+    # now str-normalizes state, so every payload survives allow_nan=False.
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = cache_service(creator, settings, audit, fake_engine, cull_factory)
+    record = _catalog_ready(creator)
+    assert service.generate_on_demand(record.id, dict(STATE))["ok"] is True
+    blob = json.loads(creator.store.cache_path(record.id).read_text(
+        encoding="utf-8"))
+    blob["entries"][0]["state"]["poison"] = float("inf")
+    text = json.dumps(blob, allow_nan=True)  # what a hand-edit can produce
+    assert "Infinity" in text
+    creator.store.cache_path(record.id).write_text(text, encoding="utf-8")
+
+    st = service.cache_status(record.id)
+    assert st["ok"] is True
+    json.dumps(st, allow_nan=False)  # raises on any non-finite -> must not
+    hit = service.generate_on_demand(record.id, dict(STATE))
+    assert hit["ok"] is True and hit["cached"] is True
+    json.dumps(hit, allow_nan=False)
+    assert hit["state"]["poison"] == "inf"  # str-normalized at load
+
+
+def test_record_with_non_dict_identity_reports_io(creator, settings, audit,
+                                                  fake_engine, cull_models):
+    # The same AttributeError class on the RECORD channel: a hand-edited
+    # `"identity": "x"` made IdentityAnchor.from_dict call .get on a string.
+    service = cache_service(creator, settings, audit, fake_engine,
+                            FakeToolkitFactory())
+    record = saved_record(creator)
+    path = creator.store.record_path(record.id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["identity"] = "x"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is False and res["kind"] == "io"
+
+
+def test_catalog_entry_from_dict_rejects_non_dict_with_guarded_type():
+    for bad in (None, "x", 5, [1]):
+        with pytest.raises(ValueError):
+            CatalogEntry.from_dict(bad)

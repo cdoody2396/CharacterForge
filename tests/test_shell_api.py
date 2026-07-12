@@ -311,3 +311,43 @@ def test_image_matte_bridges_default_args(api):
     # the bridge defaults (character_id=None) must map to structured invalid
     assert api.image_matte_catalog()["kind"] == "invalid"
     assert api.image_matte_status()["kind"] == "invalid"
+
+
+# -- on-demand cache bridge (Stage 3g) ----------------------------------------
+
+
+def test_image_cache_status_via_bridge(api):
+    created = api.create_character(
+        {"mode": "quick", "name": "Cache Status", "age": 24}
+    )
+    res = api.image_cache_status(created["id"])
+    assert res["ok"] is True and res["has_cache"] is False and res["frames"] == 0
+    assert res["matte_ready"] is False
+
+
+def test_image_generate_on_demand_via_bridge(api):
+    created = api.create_character(
+        {"mode": "quick", "name": "Cache Gen", "age": 24}
+    )
+    # malformed state is structured invalid; a valid novel state on an
+    # unpromoted character is structured no_lora — no traceback either way
+    res = api.image_generate_on_demand(created["id"], "not-a-dict")
+    assert res["ok"] is False and res["kind"] == "invalid"
+    res = api.image_generate_on_demand(
+        created["id"],
+        {"expression": "smile", "pose": "sitting", "outfit": "asis"})
+    assert res["ok"] is False and res["kind"] == "no_lora"
+
+
+def test_image_clear_cache_via_bridge(api):
+    created = api.create_character(
+        {"mode": "quick", "name": "Cache Clear", "age": 24}
+    )
+    res = api.image_clear_cache(created["id"])
+    assert res["ok"] is True and res["removed"] is False
+
+
+def test_image_cache_bridges_default_args(api):
+    assert api.image_generate_on_demand()["kind"] == "invalid"
+    assert api.image_cache_status()["kind"] == "invalid"
+    assert api.image_clear_cache()["kind"] == "invalid"
