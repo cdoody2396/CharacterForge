@@ -213,7 +213,12 @@ class _KohyaSubprocessTrainer:
             'network_module = "networks.lora"',
             f"network_dim = {c.network_dim}",
             f"network_alpha = {c.network_alpha}",
-            f"resolution = {c.resolution}",
+            # STRING, not int: sd-scripts declares --resolution type=str and
+            # unconditionally does args.resolution.split(",") — a toml int
+            # bypasses argparse coercion straight onto the namespace and
+            # AttributeErrors the trainer (hardware-validation catch,
+            # 2026-07-12, sd-scripts rev 0128ca00).
+            f'resolution = "{c.resolution}"',
             f"learning_rate = {c.learning_rate}",
             f"max_train_steps = {c.max_train_steps}",
             f"train_batch_size = {c.train_batch_size}",
@@ -226,12 +231,20 @@ class _KohyaSubprocessTrainer:
             "cache_latents = true",
             "gradient_checkpointing = true",  # fits the 16 GB floor (§3)
             "sdpa = true",   # PyTorch-native mem-efficient attn (no xformers dep)
+            # UNet-only (hardware-validation pick, 2026-07-12): standard SDXL
+            # LoRA practice — the identity payload lives in the UNet, TE
+            # training buys little here, VRAM/time drop, AND diffusers 0.39's
+            # kohya converter has a te1/te2 regression (empty rank_dict ->
+            # IndexError) that a TE-carrying LoRA trips at 3e load time (the
+            # engine also degrades to UNet-only on that failure).
+            "network_train_unet_only = true",
         ]
         config_path = request.output_dir / "train_config.toml"
         config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return config_path
 
     def train(self, request: TrainRequest) -> Path:
+        import os
         import subprocess
         import sys
 
@@ -244,13 +257,22 @@ class _KohyaSubprocessTrainer:
         if sys.platform == "win32":
             # §2: no console/terminal popup for the background training process.
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        # UTF-8 on BOTH sides of the pipe (hardware-validation catch,
+        # 2026-07-12): sd-scripts logs bilingual (Japanese) text; on Windows
+        # a non-console pipe defaults the CHILD to cp1252 (UnicodeEncodeError
+        # kills training mid-run) and text=True decodes with the locale
+        # codec in the PARENT (UnicodeDecodeError on UTF-8 bytes). PYTHONUTF8
+        # pins the child; encoding+errors pin the parent, replace never
+        # raises over a log byte.
+        env = {**os.environ, "PYTHONUTF8": "1"}
         try:
             proc = subprocess.run(
                 [self._python, str(script), "--config_file", str(config_path)],
                 cwd=str(self._trainer_dir),
-                capture_output=True, text=True,
+                capture_output=True, encoding="utf-8", errors="replace",
                 timeout=request.config.timeout_seconds,
                 creationflags=creationflags,
+                env=env,
             )
         except subprocess.TimeoutExpired as exc:
             raise TrainFailed(

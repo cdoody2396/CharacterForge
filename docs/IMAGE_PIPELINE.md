@@ -571,7 +571,13 @@ On the 16 GB target machine (after the 3a–3c checklists pass):
 
 1. Place a kohya-ss `sd-scripts` checkout with its deps in an env; set
    `models.image.lora_trainer_dir` (+ `lora_trainer_python` if separate).
-   Confirm `sdxl_train_network.py` is found (preflight).
+   Confirm `sdxl_train_network.py` is found (preflight). **Offline note
+   (2026-07-12):** the trainer subprocess inherits the app's pinned
+   `HF_HOME`/`HF_HUB_OFFLINE`, and sd-scripts' SDXL strategy loads the two
+   CLIP **tokenizers** from the hub (`openai/clip-vit-large-patch14` +
+   `laion/CLIP-ViT-bigG-14-laion2B-39B-b160k`) — prewarm both into the
+   pinned cache (done on the target) or training fails at startup with a
+   structured `train_failed` (fail-closed confirmed).
 2. Confirm a vetted set exists (3c `confirm_vetted`); `image_train_lora` →
    verify the dataset lays out under `lora/dataset/<repeats>_identity/` with
    captions, the image engine is **unloaded** before training (task-manager

@@ -130,3 +130,70 @@ def test_store_lora_paths_reject_crafted_ids(tmp_path):
     for bad in ("../evil", "a/b", ".."):
         with pytest.raises((InvalidId, ValueError)):
             store.lora_dir(bad)
+
+
+def test_write_config_toml_types_match_sd_scripts_contract(tmp_path):
+    # Hardware-validation catch (2026-07-12, sd-scripts rev 0128ca00): toml
+    # values bypass argparse type coercion (read_config_from_file puts them
+    # straight onto the namespace), and sd-scripts unconditionally does
+    # args.resolution.split(",") — so resolution MUST be a toml STRING; an
+    # int AttributeErrors the trainer at startup.
+    import tomllib
+
+    from app.imagegen.lora import TrainConfig, TrainRequest, _KohyaSubprocessTrainer
+
+    trainer = _KohyaSubprocessTrainer(tmp_path, "python")
+    request = TrainRequest(
+        dataset_dir=tmp_path / "ds", output_dir=tmp_path / "out",
+        output_name="identity", base_checkpoint=tmp_path / "ckpt.safetensors",
+        trigger="cfidabc123", config=TrainConfig(),
+    )
+    config_path = trainer._write_config(request)
+    parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert isinstance(parsed["resolution"], str)        # .split(",") contract
+    assert parsed["resolution"] == "1024"
+    assert isinstance(parsed["max_train_steps"], int)   # argparse type=int
+    assert isinstance(parsed["network_alpha"], float)
+    assert isinstance(parsed["mixed_precision"], str)
+    assert parsed["sdpa"] is True
+    # UNet-only default (2026-07-12): standard SDXL practice + sidesteps the
+    # diffusers 0.39 kohya te1/te2 converter regression at 3e load time.
+    assert parsed["network_train_unet_only"] is True
+    # Windows backslashes in the checkpoint path survive toml round-trip
+    assert parsed["pretrained_model_name_or_path"] == str(tmp_path / "ckpt.safetensors")
+
+
+def test_kohya_subprocess_pins_utf8_both_directions(tmp_path, monkeypatch):
+    # Hardware-validation catch (2026-07-12): sd-scripts logs bilingual text;
+    # on Windows a non-console pipe defaults the child to cp1252 (it dies
+    # mid-run on a Japanese log line) and text=True decodes with the locale
+    # codec in the parent. The subprocess must pin PYTHONUTF8=1 for the child
+    # and utf-8/replace for the parent's capture.
+    from app.imagegen.lora import TrainConfig, TrainRequest, _KohyaSubprocessTrainer
+
+    (tmp_path / "sdxl_train_network.py").write_text("# stub", encoding="utf-8")
+    trainer = _KohyaSubprocessTrainer(tmp_path, "python")
+    request = TrainRequest(
+        dataset_dir=tmp_path / "ds", output_dir=tmp_path / "out",
+        output_name="identity", base_checkpoint=tmp_path / "ckpt.safetensors",
+        trigger="cfidabc123", config=TrainConfig(),
+    )
+    captured = {}
+
+    class _Proc:
+        returncode = 0
+        stderr = ""
+
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        captured.update(kwargs, cmd=cmd)
+        (tmp_path / "out" / "identity.safetensors").write_bytes(b"\0")
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    out = trainer.train(request)
+    assert out.name == "identity.safetensors"
+    assert captured["env"]["PYTHONUTF8"] == "1"
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"

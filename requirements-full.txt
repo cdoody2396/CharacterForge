@@ -14,6 +14,9 @@ transformers>=4.44
 accelerate>=0.33
 safetensors>=0.4
 pillow>=10.0
+peft>=0.6      # diffusers' LoRA backend — load_lora_weights (3e catalog mode)
+               # raises "PEFT backend is required" without it (hardware-
+               # validation catch, 2026-07-12: the 3e slice never pinned it)
 #
 # --- Stage 3b — IP-Adapter baseline identity (ACTIVE) ------------------------
 # No new pins: the 3a slice (torch/diffusers>=0.31/transformers/accelerate/

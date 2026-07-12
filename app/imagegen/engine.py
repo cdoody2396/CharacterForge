@@ -560,7 +560,27 @@ class _DiffusersLoraSDXLBackend:
         try:
             pipe.load_lora_weights(str(lora.parent), weight_name=lora.name)
         except Exception as exc:
-            raise EngineUnavailable(f"failed to load the LoRA: {exc}") from exc
+            # Degrade to the UNet-only subset before refusing (hardware-
+            # validation catch, 2026-07-12): diffusers 0.39's kohya converter
+            # has a te1/te2 regression (empty text-encoder rank_dict ->
+            # IndexError), so a TE-carrying kohya LoRA — e.g. one trained
+            # before the network_train_unet_only default, or by a user-swapped
+            # trainer — would brick catalog mode. The UNet part carries the
+            # identity payload (verified on hardware); newly trained LoRAs are
+            # UNet-only anyway, so this path is for legacy/foreign files.
+            try:
+                from safetensors.torch import load_file
+
+                unet_only = {
+                    k: v for k, v in load_file(str(lora)).items()
+                    if k.startswith("lora_unet_")
+                }
+                if not unet_only:
+                    raise ValueError("no lora_unet_ keys to fall back on")
+                pipe.load_lora_weights(unet_only)
+            except Exception:
+                # surface the ORIGINAL failure — the fallback is best-effort
+                raise EngineUnavailable(f"failed to load the LoRA: {exc}") from exc
         self._pipe = pipe
         self._sampler_applied: str | None = None
 
