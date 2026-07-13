@@ -16,6 +16,7 @@ window.Creator = (function () {
   let catalog = null;      // creator_catalog() payload
   let mode = "quick";
   let loading = false;
+  let editing = null;      // {id, name, snapshot} while editing (Stage 4)
 
   // Everything the user has entered, kept outside the DOM so switching
   // modes (or reloading options) re-renders without losing work.
@@ -358,6 +359,141 @@ window.Creator = (function () {
       .forEach((s) => root.appendChild(s.card));
   }
 
+  // ------------------------------------------------------ edit mode (Stage 4)
+
+  function applyChrome() {
+    const on = !!editing;
+    $("creator-title").textContent = on ? "Edit character" : "Create a character";
+    $("create-save").textContent = on ? "Save changes" : "Create character";
+    $("creator-cancel-edit").hidden = !on;
+    // Identity tier is set at creation (§10); the full form shows everything
+    // either way, so the quick/detailed toggle is a create-path concern.
+    for (const btn of $("mode-toggle").children) btn.disabled = on;
+  }
+
+  function fillFromRecord(res) {
+    state.name = res.name || "";
+    state.age = res.age;
+    state.selections = Object.assign({}, res.selections || {});
+    state.tags = {};
+    for (const [k, v] of Object.entries(res.tags || {}))
+      state.tags[k] = (v || []).slice();
+    state.sliders = Object.assign({}, res.sliders || {});
+    state.free_text = Object.assign({}, res.free_text || {});
+  }
+
+  function showRecordIssues(issues) {
+    if (!issues || !issues.length) return;
+    const warn = el("div", "alert warn");
+    warn.appendChild(el("div", null,
+      "This record references options that are no longer loaded — those " +
+      "values are kept on the record but cannot be re-picked here:"));
+    for (const line of issues) warn.appendChild(el("div", "alert-line", line));
+    $("creator-alerts").appendChild(warn);
+  }
+
+  async function beginEdit(id) {
+    await ensureStarted();
+    if (!catalog) return; // catalog load failure already surfaced in alerts
+    let res;
+    try {
+      res = await window.pywebview.api.library_get(id);
+    } catch (err) {
+      res = { ok: false, error: String(err) };
+    }
+    const box = $("creator-alerts");
+    box.textContent = "";
+    if (!res.ok) {
+      box.appendChild(el("div", "alert warn",
+        "Could not load the character for editing: " +
+        (res.error || res.kind)));
+      return;
+    }
+    editing = { id: res.id, name: res.name, snapshot: res };
+    fillFromRecord(res);
+    mode = "detailed"; // edits always see the full form
+    for (const btn of $("mode-toggle").children)
+      btn.classList.toggle("on", btn.dataset.mode === "detailed");
+    $("mode-hint").textContent =
+      `Editing “${res.name}” — every gate re-runs on save; identity ` +
+      "(reference/LoRA) is preserved. Visual changes mark the catalog stale " +
+      "and regeneration is offered, never forced.";
+    applyChrome();
+    const feedback = $("create-feedback");
+    feedback.className = "feedback";
+    feedback.textContent = "";
+    render();
+    showRecordIssues(res.issues);
+  }
+
+  function endEdit(goLibrary) {
+    editing = null;
+    applyChrome();
+    state.name = "";
+    state.age = null;
+    state.selections = {};
+    state.tags = {};
+    state.sliders = {};
+    state.free_text = {};
+    $("creator-alerts").textContent = "";
+    $("create-feedback").className = "feedback";
+    $("create-feedback").textContent = "";
+    setMode("quick"); // restores the hint + re-renders
+    if (goLibrary && window.AppNav) window.AppNav.show("library");
+  }
+
+  // The §14 offer: after a render-relevant edit, regeneration is OFFERED —
+  // one click away, never automatic.
+  function showUpdateOffer(res) {
+    const box = $("creator-alerts");
+    box.textContent = "";
+    if (!res.render_changed) return;
+    const cid = editing ? editing.id : res.id;
+    const wrap = el("div", "alert offer");
+    const staleBits = [];
+    if (res.stale_marked && res.stale_marked.catalog) staleBits.push("catalog");
+    if (res.stale_marked && res.stale_marked.cache) staleBits.push("cache");
+    wrap.appendChild(el("div", null, staleBits.length
+      ? `This edit changes how the character renders — the ${staleBits.join(" and ")} ` +
+        "no longer match the record and are marked stale."
+      : "This edit changes how the character renders. No frames exist yet, " +
+        "so there is nothing to regenerate."));
+    // Regeneration renders through the identity LoRA; without one, offering
+    // the button would guarantee a no_lora failure. Point at training instead.
+    const hasLora = !!(editing && editing.snapshot &&
+                       editing.snapshot.identity &&
+                       editing.snapshot.identity.has_lora);
+    if (staleBits.length && !hasLora) {
+      wrap.appendChild(el("div", "alert-line",
+        "This character has no trained identity LoRA, so the catalog can't be " +
+        "regenerated yet — train one first (Stage 3)."));
+    }
+    if (staleBits.length && hasLora) {
+      const row = el("div", "offer-row");
+      const regen = el("button", "lib-btn accent", "Regenerate catalog now");
+      regen.addEventListener("click", async () => {
+        regen.disabled = true;
+        regen.textContent = "Regenerating…";
+        let out;
+        try {
+          out = await window.pywebview.api.image_generate_catalog(cid);
+        } catch (err) {
+          out = { ok: false, error: String(err) };
+        }
+        regen.textContent = out.ok ? "Regenerated" : "Did not run";
+        wrap.appendChild(el("div", "alert-line", out.ok
+          ? `Catalog regenerated — ${out.frames ?? "?"} frames.`
+          : `Regeneration did not run: ${out.error || out.kind}`));
+      });
+      const later = el("button", "lib-btn ghost", "Keep current frames");
+      later.addEventListener("click", () => { box.textContent = ""; });
+      row.appendChild(regen);
+      row.appendChild(later);
+      wrap.appendChild(row);
+    }
+    box.appendChild(wrap);
+  }
+
   // ---------------------------------------------------------------- save
 
   // Only what the current mode shows is saved: quick stays the minimal
@@ -435,13 +571,15 @@ window.Creator = (function () {
     const saveBtn = $("create-save");
     saveBtn.disabled = true;
     feedback.className = "feedback";
-    feedback.textContent = "Creating…";
+    feedback.textContent = editing ? "Saving…" : "Creating…";
     let res;
     try {
-      res = await window.pywebview.api.create_character(payload);
+      res = editing
+        ? await window.pywebview.api.library_update(editing.id, payload)
+        : await window.pywebview.api.create_character(payload);
     } catch (err) {
       feedback.className = "feedback error";
-      feedback.textContent = "Create failed: " + err;
+      feedback.textContent = (editing ? "Save" : "Create") + " failed: " + err;
       return;
     } finally {
       saving = false;
@@ -449,8 +587,21 @@ window.Creator = (function () {
     }
     if (res.ok) {
       feedback.className = "feedback ok";
-      feedback.textContent =
-        `Created “${res.name}” (${res.mode}) — saved as ${res.id.slice(0, 8)}…`;
+      if (editing) {
+        editing.name = res.name;
+        feedback.textContent = `Saved “${res.name}”` +
+          (res.render_changed ? " — appearance changed." : " — no visual change.");
+        showUpdateOffer(res);
+        // Refresh the revert snapshot so "Start over" returns to the SAVED
+        // values, not the pre-edit ones. Quiet best-effort.
+        try {
+          const fresh = await window.pywebview.api.library_get(editing.id);
+          if (fresh.ok) editing.snapshot = fresh;
+        } catch (_) { /* keep the old snapshot */ }
+      } else {
+        feedback.textContent =
+          `Created “${res.name}” (${res.mode}) — saved as ${res.id.slice(0, 8)}…`;
+      }
     } else {
       feedback.className = "feedback error";
       feedback.textContent = res.error;
@@ -459,6 +610,15 @@ window.Creator = (function () {
   }
 
   function resetForm() {
+    if (editing && editing.snapshot) {
+      // In edit mode "Start over" means "back to the saved record", not a
+      // blank form (that would read as data loss).
+      fillFromRecord(editing.snapshot);
+      $("create-feedback").className = "feedback";
+      $("create-feedback").textContent = "Reverted to the saved values.";
+      if (catalog) render();
+      return;
+    }
     state.name = "";
     state.age = null;
     state.selections = {};
@@ -529,21 +689,32 @@ window.Creator = (function () {
 
   // ---------------------------------------------------------------- init
 
-  async function ensureStarted() {
-    if (catalog || loading) return;
+  // A single shared start promise, so a caller that arrives while the catalog
+  // request is in flight (e.g. beginEdit right after clicking Create) awaits
+  // the SAME load instead of no-opping and landing on a blank form.
+  let startPromise = null;
+
+  function ensureStarted() {
+    if (catalog) return Promise.resolve();
+    if (startPromise) return startPromise;
     loading = true;
-    try {
-      catalog = await window.pywebview.api.creator_catalog();
-    } catch (err) {
-      const box = $("creator-alerts");
-      box.textContent = "";
-      box.appendChild(el("div", "alert warn",
-        "Could not load the option catalog: " + err + " — reopen this view to retry."));
-      return;
-    } finally {
-      loading = false;
-    }
-    render();
+    startPromise = (async () => {
+      try {
+        catalog = await window.pywebview.api.creator_catalog();
+      } catch (err) {
+        const box = $("creator-alerts");
+        box.textContent = "";
+        box.appendChild(el("div", "alert warn",
+          "Could not load the option catalog: " + err +
+          " — reopen this view to retry."));
+        return;
+      } finally {
+        loading = false;
+        startPromise = null;
+      }
+      render();
+    })();
+    return startPromise;
   }
 
   // Static controls exist at parse time (script sits at the end of <body>);
@@ -553,9 +724,10 @@ window.Creator = (function () {
   setMode("quick"); // sets the hint text before first catalog load
   $("create-save").addEventListener("click", save);
   $("creator-reset").addEventListener("click", resetForm);
+  $("creator-cancel-edit").addEventListener("click", () => endEdit(true));
   $("creator-reload").addEventListener("click", () => {
     if (catalog) reloadOptions(); else ensureStarted();
   });
 
-  return { ensureStarted };
+  return { ensureStarted, beginEdit };
 })();

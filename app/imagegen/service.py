@@ -74,6 +74,7 @@ from ..model.store import atomic_write_json
 from . import catalog as catalog_mod
 from . import cull as cull_mod
 from . import lora as lora_mod
+from . import manage as manage_mod
 from . import matte as matte_mod
 from .cull import ContentVerdict, CullConfig, CullToolkit, CullUnavailable, ToolkitFactory
 from .matte import MatteFactory, MatteUnavailable
@@ -1542,7 +1543,9 @@ class ImageService:
                     # Double fault (can't restore either) — drop the now-dangling
                     # manifest so catalog_status reports NO catalog (consistent),
                     # not phantom frames. The prior frames remain in catalog.old
-                    # for recovery, and the next successful run cleans it up.
+                    # for recovery until either the next successful generate or
+                    # the Stage-4 startup reconciliation sweep reclaims it
+                    # (catalog.old is a documented staging-dir orphan there).
                     self._delete_quietly(self._store.catalog_path(record.id))
             raise
         self._delete_tree_quietly(backup)
@@ -2064,12 +2067,28 @@ class ImageService:
                         attempts=attempt, replaced=replaced,
                         matted=entry.matted_path is not None,
                         matte_status=matte_status, bytes=entry.bytes)
+
+        # §14 backstop: bring the grown cache back under the LRU cap. Best-
+        # effort — the frame is generated, cached, and recorded; a cap fault
+        # must never fail the request. The fresh frame is pinned explicitly
+        # (protect_frame_id) — its last_used is newest, but the stamp has
+        # one-second resolution and a same-second tie must not evict it.
+        evicted = 0
+        try:
+            capped = self.enforce_cache_cap(record.id,
+                                            protect_frame_id=entry.frame_id)
+            if capped.get("ok"):
+                evicted = capped.get("evicted", 0)
+        except Exception:  # noqa: BLE001 — un-failable by contract
+            pass
+
         return {"ok": True, "id": record.id, "cached": False,
                 "source": "generated", "frame_id": entry.frame_id,
                 "path": entry.path, "abs_path": str(final),
                 "matted_path": entry.matted_path,
                 "matte_status": matte_status, "state": triple,
-                "attempts": attempt, "replaced": replaced}
+                "attempts": attempt, "replaced": replaced,
+                "evicted": evicted}
 
     def cache_status(self, character_id: object) -> dict:
         """Cache frame count / per-state rows (incl. the §14 last_used LRU
@@ -2123,6 +2142,79 @@ class ImageService:
                     "error": f"could not clear the cache: {exc}"}
         self._audit.log("cache_cleared", character_id=record.id)
         return {"ok": True, "id": record.id, "removed": removed}
+
+    def enforce_cache_cap(self, character_id: object,
+                          protect_frame_id: str | None = None) -> dict:
+        """§14 automatic per-character LRU cap on the on-demand cache — the
+        backstop that keeps a never-cleaned character from growing unbounded.
+        Compares the RECORDED artifacts' measured bytes (frame + sidecar +
+        matte per manifest entry, trust-rule-resolved) against
+        ``library.cache_cap_bytes`` and evicts least-recently-used entries
+        (by the 3g ``last_used`` signal) until back under the cap, purging
+        each entry's artifacts under the same trust rules as every other
+        cache purge. Unrecorded orphan bytes in the tree are deliberately
+        NOT counted — eviction cannot free them, and evicting good frames to
+        pay for them would strip the cache while the tree stayed over cap;
+        orphans are the reconciliation sweep's job (review catch). Evicted
+        states simply regenerate on demand (§14). The most-recently-used
+        entry is never evicted (a cap below one frame's cost must not
+        thrash), and ``protect_frame_id`` pins the just-inserted frame
+        against same-second ``last_used`` ties. Runs after every on-demand
+        cache insert and from the Stage-4 reconciliation pass; no models,
+        no GPU."""
+        record = self._load_record(character_id)
+        if isinstance(record, dict):
+            return record
+        manifest = self._load_cache_manifest(record.id)
+        if isinstance(manifest, dict):
+            return manifest
+        config = manage_mod.coerce_library_config(self._settings)
+        cap = config.cache_cap_bytes
+        if manifest is None or not manifest.entries:
+            return {"ok": True, "id": record.id, "evicted": 0,
+                    "freed_bytes": 0, "cap_bytes": cap, "cache_bytes": 0,
+                    "remaining": 0}
+        frames_dir = self._store.cache_frames_dir(record.id).resolve()
+        matted_dir = self._store.cache_matted_dir(record.id).resolve()
+        pairs = [
+            (entry, self._entry_disk_cost(record.id, entry, frames_dir,
+                                          matted_dir))
+            for entry in manifest.entries
+        ]
+        total = sum(cost for _entry, cost in pairs)
+        evict = manage_mod.select_evictions(pairs, total, cap,
+                                            protect_id=protect_frame_id)
+        if not evict:
+            return {"ok": True, "id": record.id, "evicted": 0,
+                    "freed_bytes": 0, "cap_bytes": cap, "cache_bytes": total,
+                    "remaining": len(manifest.entries)}
+        costs = {id(entry): cost for entry, cost in pairs}
+        freed = 0
+        for entry in evict:
+            freed += costs.get(id(entry), 0)
+            self._purge_entry_artifacts(record.id, entry, frames_dir,
+                                        matted_dir)
+            manifest.entries.remove(entry)
+        manifest.updated_at = _now_iso()
+        try:
+            self._store.save_cache(manifest)
+        except OSError as exc:
+            # Artifacts are gone but the manifest write failed: the dangling
+            # entries read as novel on lookup and the reconcile pass drops
+            # them — report it rather than pretend the eviction is recorded.
+            self._audit.log("cache_evicted", character_id=record.id,
+                            evicted=len(evict), freed_bytes=freed,
+                            cap_bytes=cap, aborted="io")
+            return {"ok": False, "kind": "io",
+                    "error": f"could not save the cache manifest after "
+                             f"eviction: {exc}"}
+        self._audit.log("cache_evicted", character_id=record.id,
+                        evicted=len(evict), freed_bytes=freed, cap_bytes=cap,
+                        remaining=len(manifest.entries))
+        return {"ok": True, "id": record.id, "evicted": len(evict),
+                "freed_bytes": freed, "cap_bytes": cap,
+                "cache_bytes": total - freed,
+                "remaining": len(manifest.entries)}
 
     # -- on-demand cache internals ------------------------------------------------
 
@@ -2294,6 +2386,48 @@ class ImageService:
             return None, "matte_failed"
         return final, "matted"
 
+    def _cache_entry_paths(self, record_id, entry, frames_dir,
+                           matted_dir) -> list[Path]:
+        """A cache entry's on-disk artifacts under the purge trust rules:
+        only paths that containment-resolve into cache/ resp. cache/matted/
+        count (frame + sidecar + canonical-stem matte + the recorded
+        matted_path when it differs)."""
+        paths: list[Path] = []
+        resolved = self._resolve_reference(record_id, entry.path,
+                                           allow_absolute=False)
+        if not isinstance(resolved, dict) and resolved[0].parent == frames_dir:
+            paths.append(resolved[0])
+            paths.append(resolved[0].with_suffix(".json"))
+            paths.append(matted_dir / f"{resolved[0].stem}.png")
+        if entry.matted_path:
+            prior = self._resolve_reference(record_id, entry.matted_path,
+                                            allow_absolute=False)
+            if (not isinstance(prior, dict) and prior[0].parent == matted_dir
+                    and prior[0] not in paths):
+                paths.append(prior[0])
+        return paths
+
+    def _purge_entry_artifacts(self, record_id, entry, frames_dir,
+                               matted_dir) -> None:
+        """Delete one cache entry's artifacts (trust rules above)."""
+        for path in self._cache_entry_paths(record_id, entry, frames_dir,
+                                            matted_dir):
+            self._delete_quietly(path)
+
+    def _entry_disk_cost(self, record_id, entry, frames_dir,
+                         matted_dir) -> int:
+        """Measured bytes an entry's artifacts occupy (the §14 eviction
+        arithmetic). A dangling entry costs ~0 — evicting it only drops the
+        row."""
+        total = 0
+        for path in self._cache_entry_paths(record_id, entry, frames_dir,
+                                            matted_dir):
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass
+        return total
+
     def _purge_state_entries(self, record_id, manifest, triple) -> int:
         """Drop every CACHE entry matching the state triple (the new frame
         replaces it), deleting its artifacts under the same trust rules as
@@ -2305,17 +2439,8 @@ class ImageService:
         for entry in list(manifest.entries):
             if not self._state_matches(entry, triple):
                 continue
-            resolved = self._resolve_reference(record_id, entry.path,
-                                               allow_absolute=False)
-            if not isinstance(resolved, dict) and resolved[0].parent == frames_dir:
-                self._delete_quietly(resolved[0])
-                self._delete_quietly(resolved[0].with_suffix(".json"))
-                self._delete_quietly(matted_dir / f"{resolved[0].stem}.png")
-            if entry.matted_path:
-                prior = self._resolve_reference(record_id, entry.matted_path,
-                                                allow_absolute=False)
-                if not isinstance(prior, dict) and prior[0].parent == matted_dir:
-                    self._delete_quietly(prior[0])
+            self._purge_entry_artifacts(record_id, entry, frames_dir,
+                                        matted_dir)
             manifest.entries.remove(entry)
             removed += 1
         return removed

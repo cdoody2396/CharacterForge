@@ -21,6 +21,7 @@ depends on the UI behaving.
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ from ..model import (
     CharacterRecord,
     CharacterStore,
     ContentBlocked,
+    IdentityAnchor,
     MAX_AGE,
     MIN_AGE,
     OptionCatalog,
@@ -70,6 +72,10 @@ FREE_TEXT_FIELDS: tuple[dict[str, Any], ...] = (
     },
 )
 _FREE_TEXT_KEYS = tuple(f["key"] for f in FREE_TEXT_FIELDS)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class _Invalid(ValueError):
@@ -122,6 +128,9 @@ class CreatorService:
         self._option_dirs = tuple(Path(d) for d in option_dirs)
         self._include_bundled = include_bundled
         self._catalog = self._load_catalog()
+        # Lazy Stage-4 render-change detector (see _render_changed). Kept
+        # None until the first edit so importing the creator stays light.
+        self._prompt_assembler = None
 
     def _load_catalog(self) -> OptionCatalog:
         return load_option_catalog(
@@ -192,14 +201,178 @@ class CreatorService:
         # Soft lint — empty by construction (everything above validated
         # against the same catalog); reported so a discrepancy is visible.
         issues = record.validate_against(self._catalog)
-        self._store.save(record)
+        try:
+            self._store.save(record)
+        except OSError as exc:
+            # Disk full / AV lock: report it structured, never a raw bridge
+            # rejection (the set_setting stance).
+            return {"ok": False, "kind": "io", "field": None,
+                    "error": f"could not save the character: {exc}"}
         self._audit.log("character_created", id=record.id, mode=mode)
         return {"ok": True, "id": record.id, "name": record.name,
                 "mode": mode, "issues": issues}
 
+    # -- record editing (Stage 4, §14) ------------------------------------------
+
+    def update_character(self, character_id: object, payload: object) -> dict:
+        """Apply an edited creator payload to an existing record. The payload
+        passes the same strict shape validation as creation and the record is
+        REBUILT (so the age + Layer-1 gates re-run — an edit cannot smuggle
+        in what creation would refuse), preserving the immutable parts: id,
+        created_at, and the identity anchor (reference/LoRA state — §14
+        editing never touches trained identity).
+
+        When the edit changes what the character *renders* as, the catalog
+        and cache manifests are marked stale (§14): the user is told frames
+        no longer match, and regeneration is offered — never forced — by the
+        UI. A personality-notes edit does not invalidate frames. Any ``mode``
+        key in the payload is ignored (create-path concern).
+
+        §15 source-of-truth: values referencing an option group NOT in the
+        current catalog (a drop-in file removed or failing to load) are
+        carried forward from the stored record — the form can neither show
+        nor round-trip them and the strict payload check would reject them,
+        so without this an unrelated edit (fixing a name typo) would
+        silently strip them. They came from an already-gated record, so
+        they are safe; ``get_character`` surfaces them as soft issues."""
+        from .library import load_record_guarded  # local: avoid import cycle
+
+        loaded = load_record_guarded(self._store, self._audit, character_id,
+                                     context="creator.update")
+        if isinstance(loaded, dict):
+            return loaded
+        if not isinstance(payload, dict):
+            return {"ok": False, "kind": "invalid", "field": None,
+                    "error": "malformed payload"}
+        try:
+            record = self._build_record(payload, identity=loaded.identity)
+        except _Invalid as exc:
+            return {"ok": False, "kind": "invalid", "field": exc.field,
+                    "error": str(exc)}
+        except ContentBlocked as exc:
+            self._audit.log(
+                "filter_block",
+                layer=1,
+                category=exc.category,
+                context=f"creator.update.{exc.field_name}",
+                matched=exc.matched,
+                character_id=loaded.id,
+            )
+            return {"ok": False, "kind": "blocked", "field": exc.field_name,
+                    "category": exc.category,
+                    "error": f"blocked by the content policy ({exc.category})"}
+        except AgeError as exc:
+            return {"ok": False, "kind": "age", "field": "age",
+                    "error": str(exc)}
+
+        record.id = loaded.id
+        record.created_at = loaded.created_at
+        self._carry_unknown_group_values(loaded, record)
+        record.touch()
+        render_changed = self._render_changed(loaded, record)
+        issues = record.validate_against(self._catalog)
+        try:
+            self._store.save(record)
+        except OSError as exc:
+            return {"ok": False, "kind": "io", "field": None,
+                    "error": f"could not save the character: {exc}"}
+        stale_marked = {"catalog": False, "cache": False}
+        if render_changed:
+            stale_marked = self._mark_stale(record.id)
+        self._audit.log("character_updated", id=record.id,
+                        render_changed=render_changed,
+                        stale_catalog=stale_marked["catalog"],
+                        stale_cache=stale_marked["cache"])
+        return {"ok": True, "id": record.id, "name": record.name,
+                "render_changed": render_changed,
+                "stale_marked": stale_marked, "issues": issues}
+
+    def _carry_unknown_group_values(
+        self, old: CharacterRecord, new: CharacterRecord
+    ) -> None:
+        """Merge into ``new`` any selection/tag/slider values from ``old``
+        whose option group is absent from the current catalog (§15 source-
+        of-truth — see update_character). Only groups the payload could not
+        legitimately carry are restored, and only when the edited payload
+        did not itself re-set that group. The values are already-gated
+        (they rode a valid loaded record); the dicts are mutated after
+        construction, which is safe because they are a subset of a record
+        that passed the gates on load."""
+        catalog = self._catalog
+        for gid, val in old.selections.items():
+            if catalog.get(gid) is None and gid not in new.selections:
+                new.selections[gid] = val
+        for gid, vals in old.tags.items():
+            if catalog.get(gid) is None and gid not in new.tags:
+                new.tags[gid] = list(vals)
+        for gid, val in old.sliders.items():
+            if catalog.get(gid) is None and gid not in new.sliders:
+                new.sliders[gid] = val
+
+    def _render_changed(self, old: CharacterRecord,
+                        new: CharacterRecord) -> bool:
+        """Whether an edit changes what the character renders as — compared
+        on the assembled positive prompt, the single source of render truth
+        (option fragments, slider prompt_ranges, appearance notes, the age
+        fragment; ``render: false`` groups like personality/voice never
+        appear in it). Any failure to assemble or even build the assembler
+        (a blocklist tightened since creation → PromptBlocked; the prompt
+        data files vanishing/locking mid-run → OSError building it) is
+        inconclusive and conservatively reads as changed — it must never
+        raise back through the bridge nor abort the pending save (review
+        catch: the lazy ``PromptAssembler()`` read was unguarded)."""
+        from ..imagegen.prompt import PromptBlocked
+
+        try:
+            if self._prompt_assembler is None:
+                from ..imagegen.prompt import PromptAssembler
+                self._prompt_assembler = PromptAssembler()
+            before = self._prompt_assembler.assemble(old, self._catalog)
+            after = self._prompt_assembler.assemble(new, self._catalog)
+        except PromptBlocked:
+            return True
+        except OSError:
+            return True
+        return before.positive != after.positive
+
+    def _mark_stale(self, character_id: str) -> dict:
+        """Best-effort §14 staleness on the catalog + cache manifests (when
+        they exist and have entries). Refreshing ``updated_at`` deliberately
+        invalidates the 3f/3g optimistic tokens — the manifest changed. A
+        corrupt or unwritable manifest reads as unmarked, never fatal (the
+        record save already succeeded); an already-stale manifest counts as
+        marked without a rewrite."""
+        from ..imagegen.service import ARTIFACT_LOAD_ERRORS
+
+        marked = {"catalog": False, "cache": False}
+        for channel, loader, saver in (
+            ("catalog", self._store.load_catalog, self._store.save_catalog),
+            ("cache", self._store.load_cache, self._store.save_cache),
+        ):
+            try:
+                manifest = loader(character_id)
+            except ARTIFACT_LOAD_ERRORS:
+                continue
+            if (manifest is None or not manifest.entries
+                    or manifest.character_id != character_id):
+                continue
+            if manifest.stale:
+                marked[channel] = True
+                continue
+            manifest.stale = True
+            manifest.updated_at = _now_iso()
+            try:
+                saver(manifest)
+            except OSError:
+                continue
+            marked[channel] = True
+        return marked
+
     # -- payload validation ----------------------------------------------------
 
-    def _build_record(self, payload: dict) -> CharacterRecord:
+    def _build_record(
+        self, payload: dict, *, identity: IdentityAnchor | None = None
+    ) -> CharacterRecord:
         name = str(payload.get("name") or "").strip()
         if not name:
             raise _Invalid("name", "a name is required")
@@ -215,6 +388,7 @@ class CreatorService:
             tags=self._check_tags(payload.get("tags") or {}),
             sliders=self._check_sliders(payload.get("sliders") or {}),
             free_text=self._check_free_text(payload.get("free_text") or {}),
+            identity=identity,  # Stage-4 edit: the anchor survives the edit
         )
 
     def _group_for(self, gid: str, channel: str) -> OptionGroup:

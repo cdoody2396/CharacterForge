@@ -16,6 +16,7 @@ from ..config import Settings
 from ..imagegen import ImageService
 from ..safety import Layer1Filter
 from .creator import CreatorService
+from .library import LibraryService
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -39,12 +40,14 @@ class Api:
         content_filter: Layer1Filter,
         creator: CreatorService,
         images: ImageService,
+        library: LibraryService,
     ):
         self._settings = settings
         self._audit = audit
         self._filter = content_filter
         self._creator = creator
         self._images = images
+        self._library = library
 
     # -- diagnostics ----------------------------------------------------------
 
@@ -132,6 +135,42 @@ class Api:
         """Validate + persist a creator payload. Non-dict payloads are
         rejected inside the service with a structured error."""
         return self._creator.create_character(payload)
+
+    # -- library & management (Stage 4) -------------------------------------------
+
+    def library_list(self) -> dict:
+        """Every stored character as a summary row (identity flags, catalog/
+        cache state incl. staleness, measured footprint, §14 deletion
+        recommendation). The UI sorts/filters client-side over this."""
+        return self._library.list_characters()
+
+    def library_get(self, character_id: Any = None) -> dict:
+        """One record serialized back into the creator-form shape, for the
+        edit path."""
+        return self._library.get_character(character_id)
+
+    def library_update(self, character_id: Any = None,
+                       payload: Any = None) -> dict:
+        """Apply an edited creator payload to an existing record: same
+        strict validation + gates as creation, identity anchor preserved;
+        render-relevant edits mark the catalog + cache stale (§14 — the UI
+        then OFFERS regeneration, never forces it)."""
+        return self._creator.update_character(character_id, payload)
+
+    def library_delete(self, character_id: Any = None) -> dict:
+        """Delete the whole per-character tree. Works on records that no
+        longer load (corrupt/blocked) — deletion is their remedy."""
+        return self._library.delete_character(character_id)
+
+    def library_thumbnail(self, character_id: Any = None) -> dict:
+        """The identity reference image as a small data URI (or None)."""
+        return self._library.thumbnail(character_id)
+
+    def library_reconcile(self) -> dict:
+        """The startup reconciliation sweep, callable from the UI: stale
+        staging dirs, manifest-orphaned artifacts, dangling manifest
+        entries, and the §14 LRU cache cap."""
+        return self._library.reconcile()
 
     # -- image pipeline (Stage 3) ------------------------------------------------
 
@@ -308,6 +347,7 @@ def run_shell(
     content_filter: Layer1Filter,
     creator: CreatorService,
     images: ImageService,
+    library: LibraryService,
 ) -> None:
     """Open the window and block until it closes."""
     import webview
@@ -320,7 +360,7 @@ def run_shell(
     except (AttributeError, TypeError):
         pass  # older pywebview without the settings dict
 
-    api = Api(settings, audit, content_filter, creator, images)
+    api = Api(settings, audit, content_filter, creator, images, library)
     create_window(api, settings)
     # debug=False: no devtools, no extra windows. private_mode keeps the
     # webview from persisting browser-profile data.

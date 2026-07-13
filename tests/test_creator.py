@@ -586,3 +586,279 @@ def test_creator_without_bundled_catalog(tmp_path, audit):
     # name+age alone still creates a valid record
     res = creator.create_character(quick_payload())
     assert res["ok"] is True
+
+
+# -- record editing (Stage 4, §14) -------------------------------------------
+
+
+def _events(audit):
+    path = audit.path_for_today()
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in
+            path.read_text(encoding="utf-8").splitlines()]
+
+
+def _created(creator, **overrides):
+    res = creator.create_character(quick_payload(**overrides))
+    assert res["ok"] is True
+    return res["id"]
+
+
+def _forge_manifests(store, cid, *, entries=True):
+    """Real catalog + cache manifests (with frames on disk) so stale marking
+    has something to mark."""
+    from app.model import CatalogEntry, CatalogManifest
+
+    frames = store.catalog_frames_dir(cid)
+    frames.mkdir(parents=True, exist_ok=True)
+    (frames / "f.png").write_bytes(b"PNG")
+    store.save_catalog(CatalogManifest(
+        character_id=cid,
+        entries=[CatalogEntry(frame_id="f", path="catalog/f.png")]
+        if entries else []))
+    cframes = store.cache_frames_dir(cid)
+    cframes.mkdir(parents=True, exist_ok=True)
+    (cframes / "c.png").write_bytes(b"PNG")
+    store.save_cache(CatalogManifest(
+        character_id=cid,
+        entries=[CatalogEntry(frame_id="c", path="cache/c.png",
+                              on_demand=True)]
+        if entries else []))
+
+
+def test_update_round_trips_and_preserves_immutables(creator, audit):
+    cid = _created(creator, selections={"race": "elf"})
+    # forge identity state + age the stored timestamps so the bump shows
+    record = creator.store.load(cid)
+    record.identity.has_lora = True
+    record.identity.lora_path = "lora/identity.safetensors"
+    record.identity.reference_image_path = "reference/r.png"
+    record.updated_at = "2020-01-01T00:00:00+00:00"
+    created_at = record.created_at
+    creator.store.save(record)
+
+    res = creator.update_character(cid, {
+        "name": "Seren Renamed", "age": 30,
+        "selections": {"race": "human"},
+    })
+    assert res["ok"] is True and res["id"] == cid
+    assert res["name"] == "Seren Renamed"
+    stored = creator.store.load(cid)
+    assert stored.name == "Seren Renamed" and int(stored.age) == 30
+    assert stored.selections == {"race": "human"}
+    assert stored.id == cid
+    assert stored.created_at == created_at
+    assert stored.updated_at > "2020-01-01"          # touched
+    # the identity anchor survives the edit untouched (§14)
+    assert stored.identity.has_lora is True
+    assert stored.identity.lora_path == "lora/identity.safetensors"
+    assert stored.identity.reference_image_path == "reference/r.png"
+    assert any(e["kind"] == "character_updated" and e["id"] == cid
+               for e in _events(audit))
+
+
+def test_update_payload_replaces_field_sets(creator):
+    cid = _created(creator, selections={"race": "elf"})
+    res = creator.update_character(cid, {"name": "Seren", "age": 27})
+    assert res["ok"] is True
+    assert creator.store.load(cid).selections == {}  # omitted -> removed
+
+
+def test_update_render_change_marks_catalog_and_cache_stale(creator):
+    cid = _created(creator, selections={"race": "elf"})
+    _forge_manifests(creator.store, cid)
+    res = creator.update_character(
+        cid, {"name": "Seren", "age": 27, "selections": {"race": "human"}})
+    assert res["ok"] is True
+    assert res["render_changed"] is True
+    assert res["stale_marked"] == {"catalog": True, "cache": True}
+    assert creator.store.load_catalog(cid).stale is True
+    assert creator.store.load_cache(cid).stale is True
+
+
+def test_update_non_visual_edit_does_not_mark_stale(creator):
+    cid = _created(creator)
+    _forge_manifests(creator.store, cid)
+    # a rename + personality notes edit renders identically (name and
+    # render:false groups never enter the prompt)
+    res = creator.update_character(cid, {
+        "name": "A Whole New Name", "age": 27,
+        "free_text": {"personality_notes": "Now quite chatty."},
+    })
+    assert res["ok"] is True
+    assert res["render_changed"] is False
+    assert res["stale_marked"] == {"catalog": False, "cache": False}
+    assert creator.store.load_catalog(cid).stale is False
+    assert creator.store.load_cache(cid).stale is False
+
+
+def test_update_age_change_is_render_relevant(creator):
+    cid = _created(creator, age=25)
+    _forge_manifests(creator.store, cid)
+    res = creator.update_character(cid, {"name": "Seren", "age": 60})
+    assert res["ok"] is True and res["render_changed"] is True
+    assert creator.store.load_catalog(cid).stale is True
+
+
+def test_update_appearance_notes_are_render_relevant(creator):
+    cid = _created(creator)
+    _forge_manifests(creator.store, cid)
+    res = creator.update_character(cid, {
+        "name": "Seren", "age": 27,
+        "free_text": {"appearance_notes": "a crescent scar over one brow"},
+    })
+    assert res["ok"] is True and res["render_changed"] is True
+
+
+def test_update_without_manifests_reports_unmarked(creator):
+    cid = _created(creator)
+    res = creator.update_character(
+        cid, {"name": "Seren", "age": 27, "selections": {"race": "elf"}})
+    assert res["ok"] is True and res["render_changed"] is True
+    assert res["stale_marked"] == {"catalog": False, "cache": False}
+
+
+def test_update_empty_manifest_not_marked(creator):
+    cid = _created(creator)
+    _forge_manifests(creator.store, cid, entries=False)
+    res = creator.update_character(
+        cid, {"name": "Seren", "age": 27, "selections": {"race": "elf"}})
+    assert res["ok"] is True
+    assert res["stale_marked"] == {"catalog": False, "cache": False}
+
+
+def test_update_corrupt_manifest_is_nonfatal(creator):
+    cid = _created(creator)
+    _forge_manifests(creator.store, cid)
+    creator.store.catalog_path(cid).write_text("{broken", encoding="utf-8")
+    res = creator.update_character(
+        cid, {"name": "Seren", "age": 27, "selections": {"race": "elf"}})
+    assert res["ok"] is True                       # the edit itself saved
+    assert res["stale_marked"]["catalog"] is False  # unmarkable, reported
+    assert res["stale_marked"]["cache"] is True     # the other channel marked
+
+
+def test_update_already_stale_counts_without_rewrite(creator):
+    from app.model import CatalogEntry, CatalogManifest
+
+    cid = _created(creator)
+    frames = creator.store.catalog_frames_dir(cid)
+    frames.mkdir(parents=True)
+    (frames / "f.png").write_bytes(b"PNG")
+    creator.store.save_catalog(CatalogManifest(
+        character_id=cid, stale=True,
+        entries=[CatalogEntry(frame_id="f", path="catalog/f.png")],
+        updated_at="2025-12-31T00:00:00+00:00"))
+    res = creator.update_character(
+        cid, {"name": "Seren", "age": 27, "selections": {"race": "elf"}})
+    assert res["ok"] is True and res["stale_marked"]["catalog"] is True
+    # no gratuitous rewrite: the optimistic token is untouched
+    assert (creator.store.load_catalog(cid).updated_at
+            == "2025-12-31T00:00:00+00:00")
+
+
+def test_update_gates_rerun_blocked_content(creator, audit):
+    cid = _created(creator)
+    res = creator.update_character(cid, {
+        "name": "Seren", "age": 27,
+        "free_text": {"backstory": "loli"},
+    })
+    assert res["ok"] is False and res["kind"] == "blocked"
+    assert creator.store.load(cid).free_text == {}  # nothing persisted
+    assert any(e["kind"] == "filter_block"
+               and e["context"].startswith("creator.update")
+               for e in _events(audit))
+
+
+def test_update_age_gate_holds(creator):
+    cid = _created(creator, age=25)
+    res = creator.update_character(cid, {"name": "Seren", "age": 17})
+    assert res["ok"] is False and res["kind"] == "age"
+    assert int(creator.store.load(cid).age) == 25
+
+
+def test_update_shape_validation(creator):
+    cid = _created(creator)
+    assert creator.update_character(cid, "nope")["kind"] == "invalid"
+    res = creator.update_character(
+        cid, {"name": "Seren", "age": 27, "selections": {"ghost_group": "x"}})
+    assert res["ok"] is False and res["kind"] == "invalid"
+    assert res["field"] == "selections.ghost_group"
+    res = creator.update_character(cid, {"name": "", "age": 27})
+    assert res["kind"] == "invalid" and res["field"] == "name"
+
+
+def test_update_structured_load_errors(creator):
+    assert creator.update_character("", {})["kind"] == "invalid"
+    assert creator.update_character("ghost", {})["kind"] == "not_found"
+    cid = _created(creator)
+    creator.store.record_path(cid).write_text("{broken", encoding="utf-8")
+    assert creator.update_character(
+        cid, {"name": "X", "age": 27})["kind"] == "io"
+
+
+def test_update_mode_key_is_ignored(creator):
+    cid = _created(creator)
+    res = creator.update_character(
+        cid, {"mode": "banana", "name": "Seren", "age": 27})
+    assert res["ok"] is True
+
+
+def test_update_never_invokes_generation(creator):
+    # §14 "offers, not forces": the edit path must never touch the image
+    # engine. Structural — CreatorService holds no ImageService reference at
+    # all, and a render-relevant edit completes with no engine wired.
+    assert not hasattr(creator, "_images")
+    assert not hasattr(creator, "_engine")
+    cid = _created(creator, selections={"race": "elf"})
+    _forge_manifests(creator.store, cid)
+    res = creator.update_character(
+        cid, {"name": "Seren", "age": 27, "selections": {"race": "human"}})
+    assert res["ok"] is True and res["render_changed"] is True
+
+
+def test_update_preserves_unknown_group_values(tmp_path, audit):
+    # §15 source-of-truth: a value referencing a drop-in group that is no
+    # longer loaded is carried forward across an unrelated edit, not stripped.
+    from app.model import CharacterRecord
+
+    # a creator whose catalog does NOT include a "faction" group
+    creator = build_creator(tmp_path / "data", audit)
+    record = CharacterRecord.create(
+        name="Keeper", age=30,
+        selections={"race": "elf", "faction": "shadowclad"},
+        tags={"traits": ["curious"], "orders": ["nightwatch"]},
+        sliders={"height": 170, "reach": 88.0})
+    creator.store.save(record)
+
+    # edit only the name; the unknown groups (faction/orders/reach) survive
+    res = creator.update_character(record.id, {
+        "name": "Keeper Renamed", "age": 30,
+        "selections": {"race": "elf"},
+        "tags": {"traits": ["curious"]},
+        "sliders": {"height": 170}})
+    assert res["ok"] is True
+    stored = creator.store.load(record.id)
+    assert stored.name == "Keeper Renamed"
+    assert stored.selections == {"race": "elf", "faction": "shadowclad"}
+    assert stored.tags == {"traits": ["curious"], "orders": ["nightwatch"]}
+    assert stored.sliders == {"height": 170, "reach": 88.0}
+
+
+def test_update_unknown_group_not_re_added_if_payload_resets_it(tmp_path,
+                                                                audit):
+    # if a since-removed group is somehow present in the payload's channel,
+    # the payload wins for that group (no double-add). Here the payload
+    # simply omits everything; a re-added known group must not resurrect a
+    # stale unknown one under the same id.
+    from app.model import CharacterRecord
+
+    creator = build_creator(tmp_path / "data", audit)
+    record = CharacterRecord.create(name="Two", age=25,
+                                    selections={"faction": "a"})
+    creator.store.save(record)
+    res = creator.update_character(record.id, {"name": "Two", "age": 25})
+    assert res["ok"] is True
+    # faction is unknown to the catalog -> carried forward
+    assert creator.store.load(record.id).selections == {"faction": "a"}

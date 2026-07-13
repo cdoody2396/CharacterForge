@@ -9,8 +9,8 @@ from app.ui.shell import WEB_DIR, Api
 
 
 @pytest.fixture()
-def api(settings, audit, content_filter, creator, images) -> Api:
-    return Api(settings, audit, content_filter, creator, images)
+def api(settings, audit, content_filter, creator, images, library) -> Api:
+    return Api(settings, audit, content_filter, creator, images, library)
 
 
 def test_ping(api):
@@ -20,7 +20,7 @@ def test_ping(api):
 def test_app_info_shape(api):
     info = api.app_info()
     assert info["version"]
-    assert "Stage 3" in info["stage"]
+    assert "Stage 4" in info["stage"]
     assert info["settings_path"].endswith("settings.json")
 
 
@@ -351,3 +351,65 @@ def test_image_cache_bridges_default_args(api):
     assert api.image_generate_on_demand()["kind"] == "invalid"
     assert api.image_cache_status()["kind"] == "invalid"
     assert api.image_clear_cache()["kind"] == "invalid"
+
+
+# -- library & management bridge (Stage 4) ----------------------------------
+
+
+def test_library_list_via_bridge(api):
+    res = api.library_list()
+    assert res["ok"] is True and res["characters"] == []
+    created = api.create_character(
+        {"mode": "quick", "name": "Lib Bridge", "age": 24}
+    )
+    res = api.library_list()
+    assert res["count"] == 1
+    row = res["characters"][0]
+    assert row["id"] == created["id"] and row["name"] == "Lib Bridge"
+    assert row["footprint"]["total_bytes"] == 0
+
+
+def test_library_get_and_update_via_bridge(api, creator):
+    created = api.create_character(
+        {"mode": "quick", "name": "Lib Edit", "age": 24,
+         "selections": {"race": "elf"}}
+    )
+    got = api.library_get(created["id"])
+    assert got["ok"] is True and got["selections"] == {"race": "elf"}
+    res = api.library_update(created["id"],
+                             {"name": "Lib Edited", "age": 26})
+    assert res["ok"] is True and res["name"] == "Lib Edited"
+    assert creator.store.load(created["id"]).name == "Lib Edited"
+
+
+def test_library_delete_via_bridge(api, creator):
+    created = api.create_character(
+        {"mode": "quick", "name": "Lib Doomed", "age": 24}
+    )
+    res = api.library_delete(created["id"])
+    assert res["ok"] is True and res["removed"] is True
+    assert not creator.store.exists(created["id"])
+
+
+def test_library_thumbnail_via_bridge(api):
+    created = api.create_character(
+        {"mode": "quick", "name": "Lib Thumb", "age": 24}
+    )
+    res = api.library_thumbnail(created["id"])
+    assert res["ok"] is True and res["thumbnail"] is None
+
+
+def test_library_reconcile_via_bridge(api):
+    res = api.library_reconcile()
+    assert res["ok"] is True and res["staging_dirs"] == 0
+
+
+def test_library_bridges_default_args(api):
+    assert api.library_get()["kind"] == "invalid"
+    assert api.library_update()["kind"] == "invalid"
+    assert api.library_delete()["kind"] == "invalid"
+    assert api.library_thumbnail()["kind"] == "invalid"
+
+
+def test_web_assets_include_library():
+    assert (WEB_DIR / "library.js").exists()

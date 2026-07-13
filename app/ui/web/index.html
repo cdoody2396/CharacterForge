@@ -13,7 +13,7 @@
     <div class="brand">Character<span>Forge</span></div>
     <button class="nav-item active" data-view="home">Home</button>
     <button class="nav-item" data-view="create">Create</button>
-    <button class="nav-item" disabled title="Stage 4">Library</button>
+    <button class="nav-item" data-view="library">Library</button>
     <button class="nav-item" disabled title="Stage 5">Scenes</button>
     <button class="nav-item" disabled title="Stage 6">Chat</button>
     <div class="spacer"></div>
@@ -76,7 +76,7 @@
     <div class="view" id="view-create" hidden>
       <section class="card">
         <div class="creator-head-row">
-          <h1>Create a character</h1>
+          <h1 id="creator-title">Create a character</h1>
           <div class="seg" id="mode-toggle">
             <button type="button" class="on" data-mode="quick">Quick</button>
             <button type="button" data-mode="detailed">Detailed</button>
@@ -90,14 +90,45 @@
 
       <section class="card savebar">
         <button type="button" id="create-save">Create character</button>
+        <button type="button" id="creator-cancel-edit" class="ghost" hidden title="Discard changes and return to the library">Back to library</button>
         <button type="button" id="creator-reset" class="ghost" title="Clear the form">Start over</button>
         <button type="button" id="creator-reload" class="ghost" title="Re-scan the option data files">Reload options</button>
         <span id="create-feedback" class="feedback"></span>
       </section>
     </div>
+
+    <div class="view" id="view-library" hidden>
+      <section class="card">
+        <div class="creator-head-row">
+          <h1>Library</h1>
+          <button type="button" id="lib-refresh" class="ghost" title="Re-read the character store">Refresh</button>
+        </div>
+        <p class="hint">Manage saved characters — edit, regenerate, reclaim disk. Editing re-runs every gate; visual edits mark the catalog stale and regeneration is offered, never forced.</p>
+        <div class="lib-toolbar">
+          <input type="search" id="lib-search" placeholder="Search names…">
+          <select id="lib-sort">
+            <option value="updated_desc">Recently updated</option>
+            <option value="created_desc">Newest first</option>
+            <option value="name_asc">Name A–Z</option>
+            <option value="footprint_desc">Largest on disk</option>
+          </select>
+          <select id="lib-filter">
+            <option value="all">All characters</option>
+            <option value="lora">Has identity LoRA</option>
+            <option value="stale">Stale catalog</option>
+            <option value="recommend">Cleanup recommended</option>
+            <option value="broken">Broken records</option>
+          </select>
+        </div>
+        <p class="hint" id="lib-summary"></p>
+        <p id="lib-status" class="feedback" role="status" aria-live="polite"></p>
+      </section>
+      <div id="lib-list"><!-- rendered by library.js --></div>
+    </div>
   </main>
 </div>
 <script src="app.js"></script>
 <script src="creator.js"></script>
+<script src="library.js"></script>
 </body>
 </html>

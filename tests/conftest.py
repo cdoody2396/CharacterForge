@@ -12,6 +12,7 @@ from app.config import Settings  # noqa: E402
 from app.imagegen import ImageService, build_image_service  # noqa: E402
 from app.safety import Layer1Filter  # noqa: E402
 from app.ui.creator import CreatorService, build_creator  # noqa: E402
+from app.ui.library import LibraryService  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -43,4 +44,13 @@ def images(creator, settings, audit) -> ImageService:
     over the creator's store and live catalog."""
     return build_image_service(
         creator.store, settings, audit, lambda: creator.catalog
+    )
+
+
+@pytest.fixture()
+def library(creator, settings, audit, images) -> LibraryService:
+    """The library service wired exactly as main.build_services wires it."""
+    return LibraryService(
+        creator.store, settings, audit,
+        images=images, catalog_provider=lambda: creator.catalog,
     )

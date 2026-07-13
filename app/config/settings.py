@@ -143,6 +143,22 @@ DEFAULTS: dict[str, Any] = {
             "timeout_seconds": 21600,    # 6h ceiling ("slow is fine", §3)
         },
     },
+    "library": {
+        # Stage-4 disk management (§14) — the deferred "exact disk thresholds
+        # + LRU caps" item, resolved against measured hardware sizes (~2.2 MB
+        # per cached state: ~1 MB frame + ~1.2 MB matte). Coerced + clamped;
+        # a bad hand-edit degrades to the code default, never crashes.
+        #
+        # Automatic per-character LRU cap on the on-demand cache (the §14
+        # backstop): past this, least-recently-used cache frames are evicted
+        # (they regenerate on demand if asked for again). 256 MB ≈ ~115
+        # cached states.
+        "cache_cap_bytes": 268435456,
+        # Deletion recommendation threshold on the on-demand cache (§14:
+        # user-facing, for deliberate management) — surfaces BEFORE the
+        # automatic cap bites. 192 MB ≈ ~87 cached states.
+        "recommend_cache_bytes": 201326592,
+    },
     "safety": {
         # Layer 4 (§11): local audit logging of generations/conversations.
         "logging_enabled": True,

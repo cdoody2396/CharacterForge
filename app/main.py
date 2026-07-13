@@ -12,13 +12,15 @@ from .imagegen import ImageService, build_image_service
 from .safety import Layer1Filter
 from .ui import shell
 from .ui.creator import CreatorService, build_creator
+from .ui.library import LibraryService
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = APP_ROOT / "data"
 
 
 def build_services() -> tuple[
-    Settings, AuditLog, Layer1Filter, CreatorService, ImageService
+    Settings, AuditLog, Layer1Filter, CreatorService, ImageService,
+    LibraryService,
 ]:
     """Construct the core services. Shared by the app and the test suite."""
     settings = Settings(DATA_DIR / "settings.json")
@@ -49,14 +51,26 @@ def build_services() -> tuple[
     images = build_image_service(
         creator.store, settings, audit, lambda: creator.catalog
     )
-    return settings, audit, content_filter, creator, images
+    library = LibraryService(
+        creator.store, settings, audit,
+        images=images, catalog_provider=lambda: creator.catalog,
+    )
+    return settings, audit, content_filter, creator, images, library
 
 
 def run() -> None:
-    settings, audit, content_filter, creator, images = build_services()
+    (settings, audit, content_filter, creator, images,
+     library) = build_services()
     audit.log("app_start", version=__version__, stage=STAGE)
+    # Stage-4 startup reconciliation sweep: hard-kill orphans + the §14 LRU
+    # cap. Fail-safe by design; a fault here must never block the launch.
     try:
-        shell.run_shell(settings, audit, content_filter, creator, images)
+        library.reconcile()
+    except Exception:  # noqa: BLE001 — launch must proceed regardless
+        audit.log("library_reconcile_failed")
+    try:
+        shell.run_shell(settings, audit, content_filter, creator, images,
+                        library)
     finally:
         audit.log("app_exit", version=__version__)
 

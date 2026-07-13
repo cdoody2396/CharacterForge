@@ -6,17 +6,24 @@
 
 function $(id) { return document.getElementById(id); }
 
+function showView(name) {
+  const buttons = document.querySelectorAll("#sidebar .nav-item[data-view]");
+  for (const b of buttons) b.classList.toggle("active", b.dataset.view === name);
+  for (const view of document.querySelectorAll("#content .view"))
+    view.hidden = view.id !== "view-" + name;
+  if (name === "create") window.Creator.ensureStarted();
+  if (name === "library") window.Library.refresh();
+}
+
 function bindNav() {
   const buttons = document.querySelectorAll("#sidebar .nav-item[data-view]");
   for (const btn of buttons) {
-    btn.addEventListener("click", () => {
-      for (const b of buttons) b.classList.toggle("active", b === btn);
-      for (const view of document.querySelectorAll("#content .view"))
-        view.hidden = view.id !== "view-" + btn.dataset.view;
-      if (btn.dataset.view === "create") window.Creator.ensureStarted();
-    });
+    btn.addEventListener("click", () => showView(btn.dataset.view));
   }
 }
+
+// Programmatic navigation for cross-view flows (library → edit → library).
+window.AppNav = { show: showView };
 
 async function loadInfo() {
   const info = await window.pywebview.api.app_info();

@@ -694,6 +694,31 @@ def test_startup_resets_a_stale_vram_slot(tmp_path, monkeypatch):
     assert settings.get("models.active") is None
 
 
+def test_build_services_wires_library_over_the_shared_store(tmp_path,
+                                                            monkeypatch):
+    # Stage-4 wiring: build_services returns the 6-tuple and the LibraryService
+    # shares the creator's store + live catalog (a wiring regression in
+    # main.py would otherwise pass the hand-wired conftest fixtures).
+    import app.main as app_main
+    from app.ui.library import LibraryService
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setattr(app_main, "DATA_DIR", data_dir)
+    result = app_main.build_services()
+    assert len(result) == 6
+    settings, audit, content_filter, creator, images, library = result
+    assert isinstance(library, LibraryService)
+    # shared store: a character created via the creator is visible to library
+    created = creator.create_character(
+        {"mode": "quick", "name": "Wired", "age": 22})
+    assert created["ok"] is True
+    listed = library.list_characters()
+    assert any(r["id"] == created["id"] for r in listed["characters"])
+    # reconcile is callable and structured (the startup sweep path)
+    assert library.reconcile()["ok"] is True
+
+
 def test_dropped_in_option_file_changes_prompts_after_live_reload(
     tmp_path, creator, service
 ):
@@ -2854,6 +2879,64 @@ def test_on_demand_generates_culls_mattes_and_caches(
     assert cull_factory.active_at_build == [None]
     assert matte_factory.matte_calls == 1 and matte_factory.classify_calls == 0
     assert any(e["kind"] == "cache_generated" for e in audit_events(audit))
+
+
+def test_on_demand_insert_enforces_lru_cap(creator, settings, audit,
+                                           fake_engine, cull_models,
+                                           matting_model):
+    """The §14 backstop rides every cache insert: a grown-over-cap cache is
+    brought back under the cap right after the new frame lands, oldest
+    last_used first, and the fresh frame is the protected MRU."""
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = cache_service(creator, settings, audit, fake_engine,
+                            cull_factory)
+    record = _catalog_ready(creator)
+    # a pre-existing cache already past the cap (the floor is 8 MB)
+    frames = creator.store.cache_frames_dir(record.id)
+    frames.mkdir(parents=True)
+    mb = 1024 * 1024
+    for fid, stamp in (("old", "2026-01-01T00:00:00+00:00"),
+                       ("mid", "2026-01-02T00:00:00+00:00")):
+        (frames / f"{fid}.png").write_bytes(b"\0" * (5 * mb))
+    creator.store.save_cache(CatalogManifest(character_id=record.id, entries=[
+        CatalogEntry(frame_id="old", path="cache/old.png",
+                     state={"expression": "old"}, on_demand=True,
+                     bytes=5 * mb, last_used="2026-01-01T00:00:00+00:00"),
+        CatalogEntry(frame_id="mid", path="cache/mid.png",
+                     state={"expression": "mid"}, on_demand=True,
+                     bytes=5 * mb, last_used="2026-01-02T00:00:00+00:00"),
+    ]))
+    settings.set("library.cache_cap_bytes", 8 * mb, save=False)
+
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True and res["source"] == "generated"
+    assert res["evicted"] == 1
+    assert not (frames / "old.png").exists()      # LRU went
+    assert (frames / "mid.png").exists()
+    manifest = creator.store.load_cache(record.id)
+    ids = [e.frame_id for e in manifest.entries]
+    assert "old" not in ids and "mid" in ids and res["frame_id"] in ids
+    assert any(e["kind"] == "cache_evicted" for e in audit_events(audit))
+
+
+def test_on_demand_insert_pins_fresh_frame_against_lru_tie(
+        monkeypatch, creator, settings, audit, fake_engine, cull_models,
+        matting_model):
+    """The post-insert cap hook must pass the just-inserted frame's id as
+    protect_frame_id so a same-second last_used tie can never evict it."""
+    cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = cache_service(creator, settings, audit, fake_engine,
+                            cull_factory)
+    record = _catalog_ready(creator)
+    seen = {}
+    real = service.enforce_cache_cap
+    monkeypatch.setattr(service, "enforce_cache_cap",
+                        lambda cid, protect_frame_id=None: seen.setdefault(
+                            "pid", protect_frame_id) or real(
+                            cid, protect_frame_id))
+    res = service.generate_on_demand(record.id, dict(STATE))
+    assert res["ok"] is True
+    assert seen["pid"] == res["frame_id"]  # the fresh frame, pinned
 
 
 def test_on_demand_instant_hit_from_cache(creator, settings, audit, fake_engine,

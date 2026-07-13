@@ -85,6 +85,12 @@ def _norm_number(value: object) -> float | int:
     except OverflowError:
         # a hand-edited huge integer should fail like any other bad number
         raise ValueError(f"slider value out of range: {value!r}") from None
+    if f != f or f in (float("inf"), float("-inf")):
+        # json.loads accepts Infinity/NaN; our writers never emit them, and a
+        # non-finite value echoed into a bridge payload is invalid strict
+        # JSON that hangs the JS promise (the documented hazard class). A
+        # hand-edited non-finite slider makes the record unreadable-corrupt.
+        raise ValueError(f"slider value must be finite: {value!r}")
     return int(f) if f.is_integer() else f
 
 
