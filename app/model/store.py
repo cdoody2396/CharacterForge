@@ -63,6 +63,37 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+def resolve_within(base_dir: Path, raw: object) -> Path | None:
+    """Resolve a base-relative path iff it names an existing file INSIDE
+    ``base_dir``, else None. Stored paths are hand-editable, so they are
+    untrusted every use: reject NUL, ``..``, absolute/drive/anchor components,
+    and anything that escapes ``base_dir`` after ``resolve()`` collapses
+    symlinks. Shared by the character library (``resolve_contained``) and the
+    Stage-5 builder store / compositing path — one containment rule, two
+    stores."""
+    text = str(raw or "").strip()
+    if not text or "\x00" in text:
+        return None
+    try:
+        base = Path(base_dir).resolve()
+    except (OSError, ValueError):
+        return None
+    candidate = Path(text)
+    if ".." in candidate.parts:
+        return None
+    if candidate.is_absolute() or candidate.drive or candidate.anchor:
+        return None
+    try:
+        resolved = (base / candidate).resolve()
+    except (OSError, ValueError):
+        return None
+    if not (resolved == base or base in resolved.parents):
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
 class CharacterStore:
     def __init__(self, root: Path | str):
         self.root = Path(root)

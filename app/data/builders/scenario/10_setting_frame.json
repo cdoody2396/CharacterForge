@@ -1,0 +1,24 @@
+{
+  "groups": [
+    {
+      "id": "setting_frame",
+      "label": "Situation",
+      "kind": "single",
+      "field": "setting_frame",
+      "order": 31,
+      "section": "Scenario",
+      "render": false,
+      "options": [
+        { "id": "first_meeting", "label": "First meeting", "prompt": "meeting for the first time" },
+        { "id": "date", "label": "A date", "prompt": "on a date" },
+        { "id": "reunion", "label": "Reunion", "prompt": "a reunion" },
+        { "id": "celebration", "label": "Celebration", "prompt": "a celebration" },
+        { "id": "quiet_evening", "label": "Quiet evening", "prompt": "a quiet evening together" },
+        { "id": "adventure", "label": "Adventure", "prompt": "on an adventure together" },
+        { "id": "negotiation", "label": "Negotiation", "prompt": "a tense negotiation" },
+        { "id": "morning_after", "label": "The morning after", "prompt": "the morning after" },
+        { "id": "chance_encounter", "label": "Chance encounter", "prompt": "a chance encounter" }
+      ]
+    }
+  ]
+}

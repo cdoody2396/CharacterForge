@@ -1,0 +1,15 @@
+# Stage-5 scene backgrounds (DECISIONS.md §13). These negatives steer PEOPLE
+# out of a generated background so a matted character composites over a clean,
+# empty setting (character-over-background, not character-in-scene). Mild and
+# fully editable (§15) — remove a line to allow incidental background figures.
+# Not a safety file: the age-coded safety negatives live in negative_safety.txt
+# and are ALSO applied to every scene render.
+1girl
+1boy
+2girls
+2boys
+multiple people
+person
+people
+crowd
+portrait

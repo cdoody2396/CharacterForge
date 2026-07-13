@@ -1,0 +1,25 @@
+{
+  "groups": [
+    {
+      "id": "relationship",
+      "label": "Relationship",
+      "kind": "single",
+      "field": "relationship",
+      "order": 30,
+      "section": "Scenario",
+      "render": false,
+      "options": [
+        { "id": "strangers", "label": "Strangers", "prompt": "strangers" },
+        { "id": "acquaintances", "label": "Acquaintances", "prompt": "acquaintances" },
+        { "id": "friends", "label": "Friends", "prompt": "friends" },
+        { "id": "close_friends", "label": "Close friends", "prompt": "close friends" },
+        { "id": "partners", "label": "Partners", "prompt": "romantic partners" },
+        { "id": "spouses", "label": "Spouses", "prompt": "married couple" },
+        { "id": "exes", "label": "Exes", "prompt": "former partners" },
+        { "id": "coworkers", "label": "Coworkers", "prompt": "coworkers" },
+        { "id": "rivals", "label": "Rivals", "prompt": "rivals" },
+        { "id": "reunited", "label": "Reunited", "prompt": "reunited after a long time" }
+      ]
+    }
+  ]
+}

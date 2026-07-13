@@ -15,6 +15,7 @@ from ..audit import AuditLog
 from ..config import Settings
 from ..imagegen import ImageService
 from ..safety import Layer1Filter
+from .builders import BuilderService
 from .creator import CreatorService
 from .library import LibraryService
 
@@ -41,6 +42,7 @@ class Api:
         creator: CreatorService,
         images: ImageService,
         library: LibraryService,
+        builders: BuilderService,
     ):
         self._settings = settings
         self._audit = audit
@@ -48,6 +50,7 @@ class Api:
         self._creator = creator
         self._images = images
         self._library = library
+        self._builders = builders
 
     # -- diagnostics ----------------------------------------------------------
 
@@ -311,6 +314,79 @@ class Api:
         states regenerate on demand (3g, §14)."""
         return self._images.clear_cache(character_id)
 
+    # -- builders: persona / scene / event / scenario (Stage 5) -------------------
+
+    def builder_describe(self, kind: Any = None) -> dict:
+        """The per-kind option catalog + free-text fields the builder renders
+        from (+ the code-advertised consent frames for a scenario). ``kind``
+        None returns the kind list."""
+        return self._builders.describe(kind)
+
+    def builder_reload_options(self, kind: Any = None) -> dict:
+        """Re-scan the builder option data files so a freshly dropped-in file
+        surfaces without an app restart (§15)."""
+        return self._builders.reload(kind)
+
+    def builder_create(self, payload: Any = None) -> dict:
+        """Validate + persist a builder payload (all four kinds). The record
+        re-runs the Layer-1 content + Layer-3 consent + kind gates."""
+        return self._builders.create(payload)
+
+    def builder_update(self, builder_id: Any = None, payload: Any = None) -> dict:
+        """Apply an edited payload to an existing builder (kind fixed; same
+        gates re-run as creation)."""
+        return self._builders.update(builder_id, payload)
+
+    def builder_list(self) -> dict:
+        """Every stored builder as a summary row. Unloadable records degrade to
+        deletable error rows, never hide."""
+        return self._builders.list()
+
+    def builder_get(self, builder_id: Any = None) -> dict:
+        """One builder serialized back into the form shape, for the edit path."""
+        return self._builders.get(builder_id)
+
+    def builder_delete(self, builder_id: Any = None) -> dict:
+        """Delete the whole per-builder tree (works on unloadable records)."""
+        return self._builders.delete(builder_id)
+
+    def builder_reconcile(self) -> dict:
+        """Sweep orphaned scene-background frames (the killed-generation
+        kill-window); fail-safe vouching model. Also runs at startup."""
+        return self._builders.reconcile()
+
+    # -- scene imagery + compositing (Stage 5) -----------------------------------
+
+    def scene_generate_background(self, scene_id: Any = None,
+                                  seed: Any = None) -> dict:
+        """Generate a background for a scene builder (§13, [HARDWARE]): gated
+        scenery prompt -> plain SDXL render -> Layer-2 pixel gate -> persist.
+        Structured engine/classifier errors on the sandbox."""
+        return self._images.generate_background(scene_id, seed)
+
+    def scene_background_status(self, scene_id: Any = None) -> dict:
+        """A scene's generated backgrounds + Layer-2 readiness. No GPU."""
+        return self._images.background_status(scene_id)
+
+    def image_matted_frames(self, character_id: Any = None) -> dict:
+        """A character's matted (keyable RGBA) frames — the compositing UI's
+        source list (catalog + cache). No GPU."""
+        return self._images.matted_frames(character_id)
+
+    def scene_clear_background(self, scene_id: Any = None) -> dict:
+        """Delete a scene's generated backgrounds (frames + manifest)."""
+        return self._images.clear_background(scene_id)
+
+    def image_composite(self, character_id: Any = None, frame_ref: Any = None,
+                        scene_id: Any = None, background_ref: Any = None,
+                        overrides: Any = None) -> dict:
+        """Composite a matted character frame over a scene background (§13), or
+        — with no scene — return the matted cutout as a transparent-passthrough
+        preview (background on/off toggle). Returns a PNG data-URI preview.
+        All-[HERE]: runs in the sandbox."""
+        return self._images.composite_frame(
+            character_id, frame_ref, scene_id, background_ref, overrides)
+
 
 def _safe_int(value: Any, default: int) -> int:
     """Persisted geometry may be hand-edited to a non-number. Because the app
@@ -348,6 +424,7 @@ def run_shell(
     creator: CreatorService,
     images: ImageService,
     library: LibraryService,
+    builders: BuilderService,
 ) -> None:
     """Open the window and block until it closes."""
     import webview
@@ -360,7 +437,8 @@ def run_shell(
     except (AttributeError, TypeError):
         pass  # older pywebview without the settings dict
 
-    api = Api(settings, audit, content_filter, creator, images, library)
+    api = Api(settings, audit, content_filter, creator, images, library,
+              builders)
     create_window(api, settings)
     # debug=False: no devtools, no extra windows. private_mode keeps the
     # webview from persisting browser-profile data.

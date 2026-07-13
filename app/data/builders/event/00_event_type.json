@@ -1,0 +1,23 @@
+{
+  "groups": [
+    {
+      "id": "event_type",
+      "label": "Event type",
+      "kind": "single",
+      "field": "event_type",
+      "order": 50,
+      "section": "Event",
+      "render": false,
+      "options": [
+        { "id": "meeting", "label": "Meeting", "prompt": "a meeting" },
+        { "id": "conflict", "label": "Conflict", "prompt": "a conflict" },
+        { "id": "celebration", "label": "Celebration", "prompt": "a celebration" },
+        { "id": "revelation", "label": "Revelation", "prompt": "a revelation" },
+        { "id": "journey", "label": "Journey", "prompt": "a journey" },
+        { "id": "farewell", "label": "Farewell", "prompt": "a farewell" },
+        { "id": "reunion", "label": "Reunion", "prompt": "a reunion" },
+        { "id": "turning_point", "label": "Turning point", "prompt": "a turning point" }
+      ]
+    }
+  ]
+}

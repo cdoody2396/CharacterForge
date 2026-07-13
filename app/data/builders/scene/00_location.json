@@ -1,0 +1,35 @@
+{
+  "groups": [
+    {
+      "id": "location",
+      "label": "Location",
+      "kind": "single",
+      "field": "location",
+      "order": 20,
+      "section": "Scene",
+      "render": true,
+      "options": [
+        { "id": "bedroom", "label": "Bedroom", "prompt": "bedroom, bed, indoors" },
+        { "id": "living_room", "label": "Living room", "prompt": "living room, sofa, indoors" },
+        { "id": "kitchen", "label": "Kitchen", "prompt": "kitchen, indoors" },
+        { "id": "cafe", "label": "Cafe", "prompt": "cafe, coffee shop, indoors" },
+        { "id": "bar", "label": "Bar / lounge", "prompt": "bar, lounge, indoors, dim" },
+        { "id": "restaurant", "label": "Restaurant", "prompt": "restaurant, table, indoors" },
+        { "id": "office", "label": "Office", "prompt": "office, desk, indoors" },
+        { "id": "library", "label": "Library", "prompt": "library, bookshelves, indoors" },
+        { "id": "hotel_room", "label": "Hotel room", "prompt": "hotel room, bed, indoors" },
+        { "id": "rooftop", "label": "Rooftop", "prompt": "rooftop, city skyline, outdoors" },
+        { "id": "city_street", "label": "City street", "prompt": "city street, buildings, outdoors" },
+        { "id": "park", "label": "Park", "prompt": "park, trees, grass, outdoors" },
+        { "id": "beach", "label": "Beach", "prompt": "beach, ocean, sand, outdoors" },
+        { "id": "forest", "label": "Forest", "prompt": "forest, trees, nature, outdoors" },
+        { "id": "garden", "label": "Garden", "prompt": "garden, flowers, outdoors" },
+        { "id": "onsen", "label": "Hot spring", "prompt": "hot spring, onsen, steam, outdoors" },
+        { "id": "tavern", "label": "Fantasy tavern", "prompt": "fantasy tavern, wooden interior, indoors" },
+        { "id": "throne_room", "label": "Throne room", "prompt": "throne room, castle, ornate, indoors" },
+        { "id": "ruins", "label": "Ancient ruins", "prompt": "ancient ruins, stone, overgrown, outdoors" },
+        { "id": "spaceship", "label": "Spaceship interior", "prompt": "spaceship interior, sci-fi, futuristic, indoors" }
+      ]
+    }
+  ]
+}

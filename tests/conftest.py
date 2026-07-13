@@ -11,6 +11,7 @@ from app.audit import AuditLog  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.imagegen import ImageService, build_image_service  # noqa: E402
 from app.safety import Layer1Filter  # noqa: E402
+from app.ui.builders import BuilderService, build_builders  # noqa: E402
 from app.ui.creator import CreatorService, build_creator  # noqa: E402
 from app.ui.library import LibraryService  # noqa: E402
 
@@ -39,11 +40,21 @@ def creator(tmp_path, audit) -> CreatorService:
 
 
 @pytest.fixture()
-def images(creator, settings, audit) -> ImageService:
+def builders(tmp_path, audit) -> BuilderService:
+    """The Stage-5 builder service over tmp_path/data (bundled builder option
+    files + tmp_path/data/builders as the user drop-in tree)."""
+    return build_builders(tmp_path / "data", audit)
+
+
+@pytest.fixture()
+def images(creator, settings, audit, builders) -> ImageService:
     """The image service wired exactly as main.build_services wires it:
-    over the creator's store and live catalog."""
+    over the creator's store and live catalog, plus the builder store + live
+    SCENE catalog for Stage-5 scene generation / compositing."""
     return build_image_service(
-        creator.store, settings, audit, lambda: creator.catalog
+        creator.store, settings, audit, lambda: creator.catalog,
+        builder_store=builders.store,
+        scene_catalog_provider=builders.scene_catalog,
     )
 
 

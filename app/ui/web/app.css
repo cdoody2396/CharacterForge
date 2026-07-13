@@ -409,3 +409,56 @@ button.ghost {
   margin-top: 10px;
 }
 .offer-row { display: flex; gap: 10px; margin-top: 10px; }
+
+/* ---- Stage 5: builders (scenes / personas / events / scenarios) ---- */
+button.accent {
+  background: var(--accent); border: 0; color: #fff;
+  padding: 9px 16px; border-radius: 8px; font-size: 13px; cursor: pointer;
+}
+button.accent:disabled { opacity: .55; cursor: default; }
+button.ghost.danger, .lib-btn.ghost.danger { color: #e06c75; }
+.savebar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; }
+
+.bld-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.bld-card {
+  background: var(--panel); border: 1px solid var(--panel-edge);
+  border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.bld-card.broken { border-color: rgba(224, 108, 117, .5); }
+.bld-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bld-name { font-weight: 600; }
+.bld-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.badge.kind-persona { color: #7fb2ff; border-color: rgba(127, 178, 255, .45); }
+.badge.kind-scene { color: #5fce9d; border-color: rgba(95, 206, 157, .45); }
+.badge.kind-event { color: #e8b04c; border-color: rgba(232, 176, 76, .45); }
+.badge.kind-scenario { color: #c99bf6; border-color: rgba(201, 155, 246, .45); }
+.badge.consent { color: #5fce9d; border-color: rgba(95, 206, 157, .45); }
+
+.bg-panel { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--panel-edge); }
+.bg-panel h3 { margin: 0 0 6px; font-size: 14px; }
+.bg-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.bg-thumb {
+  font-size: 11px; color: var(--muted); background: var(--bg);
+  border: 1px solid var(--panel-edge); border-radius: 6px; padding: 4px 8px;
+}
+.bg-thumb.missing { text-decoration: line-through; opacity: .6; }
+
+.comp-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px; margin-bottom: 14px;
+}
+.comp-grid select { width: 100%; }
+.composite-preview { margin-top: 14px; }
+.composite-img {
+  max-width: 100%; max-height: 60vh; border-radius: 8px;
+  border: 1px solid var(--panel-edge);
+}
+/* transparent-passthrough preview reads better on a checker backdrop */
+.composite-img.checker {
+  background-color: #2a2d37;
+  background-image:
+    linear-gradient(45deg, #23252d 25%, transparent 25%, transparent 75%, #23252d 75%),
+    linear-gradient(45deg, #23252d 25%, transparent 25%, transparent 75%, #23252d 75%);
+  background-size: 20px 20px; background-position: 0 0, 10px 10px;
+}

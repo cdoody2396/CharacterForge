@@ -71,6 +71,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 BUNDLED_OPTIONS_DIR = Path(__file__).resolve().parent.parent / "data" / "options"
+# Stage-5 builder option definitions, per-kind subdirs + a _shared dir
+# (DECISIONS.md §13). Loaded with include_bundled=False so the character
+# options (races, anatomy) never leak into a builder form.
+BUNDLED_BUILDERS_DIR = Path(__file__).resolve().parent.parent / "data" / "builders"
 
 SELECTION_KINDS = ("single", "multi", "tags")
 NUMERIC_KINDS = ("slider", "number")
@@ -534,3 +538,21 @@ def load_option_catalog(
                     raise
                 errors.append((path.name, str(exc)))
     return OptionCatalog(groups, errors)
+
+
+def load_builder_catalog(
+    kind: str, data_dir: Path | str | None = None, *, strict: bool = False
+) -> OptionCatalog:
+    """Load the option catalog for one builder kind (Stage 5, §13): the bundled
+    ``_shared`` groups + the bundled per-kind groups, then the same two under a
+    runtime ``<data_dir>/builders/`` so drop-in files extend a kind with no
+    rebuild (§15). ``include_bundled=False`` — the character catalog (races,
+    anatomy) must never leak into a builder form; §12's numeric reservation
+    still runs at load, so a builder numeric group on any non-reserved field is
+    a load error (the bundled builder files define none, and a ``BuilderRecord``
+    has no sliders field regardless — "no sliders" holds structurally)."""
+    dirs: list[Path] = [BUNDLED_BUILDERS_DIR / "_shared", BUNDLED_BUILDERS_DIR / kind]
+    if data_dir is not None:
+        base = Path(data_dir) / "builders"
+        dirs += [base / "_shared", base / kind]
+    return load_option_catalog(dirs, include_bundled=False, strict=strict)

@@ -1,0 +1,23 @@
+{
+  "groups": [
+    {
+      "id": "lighting",
+      "label": "Lighting",
+      "kind": "single",
+      "field": "lighting",
+      "order": 22,
+      "section": "Scene",
+      "render": true,
+      "options": [
+        { "id": "soft", "label": "Soft", "prompt": "soft lighting" },
+        { "id": "warm", "label": "Warm", "prompt": "warm lighting" },
+        { "id": "dim", "label": "Dim", "prompt": "dim lighting, low light" },
+        { "id": "dramatic", "label": "Dramatic", "prompt": "dramatic lighting, chiaroscuro" },
+        { "id": "neon", "label": "Neon", "prompt": "neon lights, colorful lighting" },
+        { "id": "candlelit", "label": "Candlelit", "prompt": "candlelight, warm glow" },
+        { "id": "moonlit", "label": "Moonlit", "prompt": "moonlight, cool light" },
+        { "id": "backlit", "label": "Backlit", "prompt": "backlighting, rim light" }
+      ]
+    }
+  ]
+}

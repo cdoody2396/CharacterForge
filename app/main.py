@@ -11,6 +11,7 @@ from .config import Settings
 from .imagegen import ImageService, build_image_service
 from .safety import Layer1Filter
 from .ui import shell
+from .ui.builders import BuilderService, build_builders
 from .ui.creator import CreatorService, build_creator
 from .ui.library import LibraryService
 
@@ -20,7 +21,7 @@ DATA_DIR = APP_ROOT / "data"
 
 def build_services() -> tuple[
     Settings, AuditLog, Layer1Filter, CreatorService, ImageService,
-    LibraryService,
+    LibraryService, BuilderService,
 ]:
     """Construct the core services. Shared by the app and the test suite."""
     settings = Settings(DATA_DIR / "settings.json")
@@ -46,31 +47,44 @@ def build_services() -> tuple[
     _engine.pin_hf_offline(settings)
     content_filter = Layer1Filter()
     creator = build_creator(DATA_DIR, audit)
+    # Stage-5 builders (persona/scene/event/scenario) live in a parallel store.
+    builders = build_builders(DATA_DIR, audit)
     # The image service reads the creator's live catalog so "Reload options"
-    # changes prompt assembly the same instant it changes the form.
+    # changes prompt assembly the same instant it changes the form; it also
+    # owns scene background generation + compositing, so it takes the builder
+    # store + the live SCENE catalog (a builder "Reload options" reaches scene
+    # prompt assembly the same instant).
     images = build_image_service(
-        creator.store, settings, audit, lambda: creator.catalog
+        creator.store, settings, audit, lambda: creator.catalog,
+        builder_store=builders.store,
+        scene_catalog_provider=builders.scene_catalog,
     )
     library = LibraryService(
         creator.store, settings, audit,
         images=images, catalog_provider=lambda: creator.catalog,
     )
-    return settings, audit, content_filter, creator, images, library
+    return (settings, audit, content_filter, creator, images, library,
+            builders)
 
 
 def run() -> None:
-    (settings, audit, content_filter, creator, images,
-     library) = build_services()
+    (settings, audit, content_filter, creator, images, library,
+     builders) = build_services()
     audit.log("app_start", version=__version__, stage=STAGE)
-    # Stage-4 startup reconciliation sweep: hard-kill orphans + the §14 LRU
-    # cap. Fail-safe by design; a fault here must never block the launch.
+    # Startup reconciliation sweeps: hard-kill orphans + the §14 LRU cap
+    # (Stage 4), and orphaned scene-background frames (Stage 5). Fail-safe by
+    # design; a fault here must never block the launch.
     try:
         library.reconcile()
     except Exception:  # noqa: BLE001 — launch must proceed regardless
         audit.log("library_reconcile_failed")
     try:
+        builders.reconcile()
+    except Exception:  # noqa: BLE001 — launch must proceed regardless
+        audit.log("builder_reconcile_failed")
+    try:
         shell.run_shell(settings, audit, content_filter, creator, images,
-                        library)
+                        library, builders)
     finally:
         audit.log("app_exit", version=__version__)
 

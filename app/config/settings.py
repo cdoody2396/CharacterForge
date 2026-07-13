@@ -126,6 +126,20 @@ DEFAULTS: dict[str, Any] = {
             "coverage_min": 0.02,      # degenerate floor (solid-alpha fraction)
             "coverage_max": 0.98,      # degenerate ceiling
         },
+        # Stage-5 character-over-background compositing (§13). All coerced +
+        # clamped (bad hand-edit -> code default). `anchor` places the matted
+        # character over the scene background; `scale` is its height as a
+        # fraction of the background; `edge_choke`/`feather_px`/`alpha_floor`
+        # retire the 3f matte-halo residual AT COMPOSITE TIME (no re-matte) over
+        # bright/dark backgrounds — tune at hardware validation (§16).
+        "compositing": {
+            "anchor": "bottom_center",  # bottom_center|center|bottom_left|bottom_right|top_center
+            "scale": 0.85,              # fg height / bg height, (0, 1]
+            "margin": 0.0,              # gap from the anchored edge, fraction of bg height
+            "edge_choke": 0,            # alpha erosion passes (halo choke), int [0, 8]
+            "feather_px": 0,            # Gaussian soften after the choke, int [0, 8]
+            "alpha_floor": 0,           # clamp alpha < this to 0 (halo fringe), int [0, 254]
+        },
         # Stage-3d identity-LoRA hyperparameters (§6, quality-max). Every value
         # is a hardware-tuned default (§16); a bad hand-edit clamps/degrades.
         "lora_train": {

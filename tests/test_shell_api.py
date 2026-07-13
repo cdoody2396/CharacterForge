@@ -9,8 +9,9 @@ from app.ui.shell import WEB_DIR, Api
 
 
 @pytest.fixture()
-def api(settings, audit, content_filter, creator, images, library) -> Api:
-    return Api(settings, audit, content_filter, creator, images, library)
+def api(settings, audit, content_filter, creator, images, library, builders) -> Api:
+    return Api(settings, audit, content_filter, creator, images, library,
+               builders)
 
 
 def test_ping(api):
@@ -20,7 +21,7 @@ def test_ping(api):
 def test_app_info_shape(api):
     info = api.app_info()
     assert info["version"]
-    assert "Stage 4" in info["stage"]
+    assert "Stage 5" in info["stage"]
     assert info["settings_path"].endswith("settings.json")
 
 
@@ -413,3 +414,63 @@ def test_library_bridges_default_args(api):
 
 def test_web_assets_include_library():
     assert (WEB_DIR / "library.js").exists()
+
+
+# -- Stage-5 builder + scene + compositing bridges --------------------------
+
+def test_builder_describe_bridge(api):
+    d = api.builder_describe("scenario")
+    assert d["ok"] and "consent_frames" in d
+
+
+def test_builder_create_and_list_bridge(api):
+    r = api.builder_create({"kind": "scene", "name": "Bridge scene",
+                            "selections": {"location": "beach"}})
+    assert r["ok"]
+    listed = api.builder_list()
+    assert any(b.get("id") == r["id"] for b in listed["builders"])
+
+
+def test_builder_scenario_consent_gate_via_bridge(api):
+    assert api.builder_create({"kind": "scenario", "name": "S"})["ok"] is False
+
+
+def test_builder_get_update_delete_bridge(api):
+    created = api.builder_create({"kind": "persona", "name": "P"})
+    assert api.builder_get(created["id"])["ok"]
+    assert api.builder_update(created["id"], {"name": "P2"})["ok"]
+    assert api.builder_delete(created["id"])["ok"]
+
+
+def test_builder_bridges_default_args(api):
+    assert api.builder_get()["kind"] == "invalid"
+    assert api.builder_update()["kind"] == "invalid"
+    assert api.builder_delete()["kind"] == "invalid"
+
+
+def test_builder_reconcile_bridge(api):
+    res = api.builder_reconcile()
+    assert res["ok"] is True and res["orphans"] == 0
+
+
+def test_scene_background_bridges_structured_on_sandbox(api):
+    scene = api.builder_create({"kind": "scene", "name": "S"})
+    # background generation needs the model — a structured error, never a
+    # traceback (engine or classifier unavailable in the sandbox).
+    gen = api.scene_generate_background(scene["id"])
+    assert gen["ok"] is False and "kind" in gen
+    assert api.scene_background_status(scene["id"])["ok"] is True
+    assert api.scene_clear_background(scene["id"])["ok"] is True
+
+
+def test_image_composite_bridge_missing_character(api):
+    res = api.image_composite()
+    assert res["ok"] is False and res["kind"] in ("invalid", "not_found")
+
+
+def test_image_matted_frames_bridge(api):
+    assert api.image_matted_frames()["kind"] == "invalid"
+
+
+def test_web_assets_include_builders():
+    assert (WEB_DIR / "builders.js").exists()

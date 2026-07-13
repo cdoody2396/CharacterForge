@@ -1,0 +1,23 @@
+{
+  "groups": [
+    {
+      "id": "tone",
+      "label": "Narrative Tone",
+      "kind": "single",
+      "field": "tone",
+      "order": 11,
+      "section": "Tone",
+      "render": false,
+      "options": [
+        { "id": "playful", "label": "Playful", "prompt": "playful tone" },
+        { "id": "serious", "label": "Serious", "prompt": "serious tone" },
+        { "id": "dramatic", "label": "Dramatic", "prompt": "dramatic tone" },
+        { "id": "comedic", "label": "Comedic", "prompt": "light, comedic tone" },
+        { "id": "dark", "label": "Dark", "prompt": "dark tone" },
+        { "id": "wholesome", "label": "Wholesome", "prompt": "wholesome tone" },
+        { "id": "flirtatious", "label": "Flirtatious", "prompt": "flirtatious tone" },
+        { "id": "adventurous", "label": "Adventurous", "prompt": "adventurous tone" }
+      ]
+    }
+  ]
+}

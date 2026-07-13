@@ -1,0 +1,21 @@
+{
+  "groups": [
+    {
+      "id": "weather",
+      "label": "Weather",
+      "kind": "single",
+      "field": "weather",
+      "order": 23,
+      "section": "Scene",
+      "render": true,
+      "options": [
+        { "id": "clear", "label": "Clear", "prompt": "clear sky" },
+        { "id": "cloudy", "label": "Cloudy", "prompt": "cloudy, overcast sky" },
+        { "id": "rain", "label": "Rain", "prompt": "rain, wet, rainy" },
+        { "id": "storm", "label": "Storm", "prompt": "thunderstorm, dark clouds" },
+        { "id": "snow", "label": "Snow", "prompt": "snow, snowing, winter" },
+        { "id": "fog", "label": "Fog", "prompt": "fog, mist, hazy" }
+      ]
+    }
+  ]
+}

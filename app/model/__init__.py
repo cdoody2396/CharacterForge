@@ -29,14 +29,29 @@ from .character import (
     SCHEMA_VERSION,
     ensure_safe_id,
 )
+from .builder import (
+    APPROVED_CONSENT_FRAMES,
+    BUILDER_KINDS,
+    CONSENT_FRAME_LABELS,
+    BackgroundEntry,
+    BackgroundManifest,
+    BuilderKindError,
+    BuilderRecord,
+    ConsentError,
+    SCENARIO,
+    SCENE,
+    approved_consent_frames,
+)
+from .builder_store import BuilderNotFound, BuilderStore
 from .options import (
     OptionCatalog,
     OptionFormatError,
     OptionGroup,
     OptionItem,
+    load_builder_catalog,
     load_option_catalog,
 )
-from .store import CharacterNotFound, CharacterStore
+from .store import CharacterNotFound, CharacterStore, resolve_within
 
 __all__ = [
     "Age",
@@ -62,6 +77,22 @@ __all__ = [
     "OptionItem",
     "OptionFormatError",
     "load_option_catalog",
+    "load_builder_catalog",
     "CharacterStore",
     "CharacterNotFound",
+    "resolve_within",
+    # Stage-5 builders
+    "BuilderRecord",
+    "BuilderKindError",
+    "ConsentError",
+    "BUILDER_KINDS",
+    "APPROVED_CONSENT_FRAMES",
+    "CONSENT_FRAME_LABELS",
+    "approved_consent_frames",
+    "SCENE",
+    "SCENARIO",
+    "BackgroundManifest",
+    "BackgroundEntry",
+    "BuilderStore",
+    "BuilderNotFound",
 ]

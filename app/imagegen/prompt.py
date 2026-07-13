@@ -41,7 +41,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..model import CharacterRecord, OptionCatalog, OptionGroup
+from ..model import BuilderRecord, CharacterRecord, OptionCatalog, OptionGroup
 from ..safety import Layer1Filter, get_filter
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -49,6 +49,15 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 # The free-text fields that feed the image prompt. Backstory and personality
 # notes are chat-side context (Stage 6d), not visual signal.
 IMAGE_FREE_TEXT_KEYS = ("appearance_notes",)
+
+# The builder free-text field that feeds a SCENE background prompt (Stage 5,
+# §13). The scenario/persona/event notes are chat-side, never rendered.
+SCENE_FREE_TEXT_KEYS = ("setting_notes",)
+
+# Booru-idiomatic anchor for an empty setting: "no humans" is the strongest
+# lever to keep a generated background people-free so a matted character
+# composites over it cleanly (§13). Paired with negative_scene.txt.
+_SCENE_ANCHOR = "scenery, no humans"
 
 # Booru-style subject anchors keyed off the gender_presentation field.
 # Generation-side conditioning, not a record property: Illustrious-family
@@ -146,6 +155,7 @@ class PromptAssembler:
         self._positive_quality = _load_fragments(data_dir / "positive_quality.txt")
         self._negative_quality = _load_fragments(data_dir / "negative_quality.txt")
         self._negative_safety = _load_fragments(data_dir / "negative_safety.txt")
+        self._negative_scene = _load_fragments(data_dir / "negative_scene.txt")
 
     # -- public API -----------------------------------------------------------
 
@@ -209,6 +219,57 @@ class PromptAssembler:
         negative = ", ".join(
             self._dedupe(self._negative_safety + self._negative_quality)
         )
+        return AssembledPrompt(positive, negative, tuple(kept))
+
+    def assemble_scene(
+        self, record: BuilderRecord, catalog: OptionCatalog
+    ) -> AssembledPrompt:
+        """Build a gated positive scenery prompt for a **scene** builder record
+        + the scene negative prompt (Stage 5, §13).
+
+        NO character identity: no subject anchor, no adult anchor, no age — a
+        scene renders an empty *setting* the character is later composited over
+        (character-over-background, not character-in-scene). It reuses the
+        SAME per-fragment gate and the SAME cross-fragment ``_gate_adjacency``
+        as character assembly — the scene channel is a §15 attack surface
+        (option-file ``prompt`` text is data no record gate saw) and a *named*
+        minor-coding surface (CONTENT_POLICY R7: school vocabulary blocks in
+        every image prompt, scene backgrounds included), so it must not be a
+        separate, weaker path. Layer-1 hits raise ``PromptBlocked``.
+
+        Negatives stack the age-coded safety anchors (``negative_safety.txt``,
+        unchanged) ahead of the people-steer (``negative_scene.txt``) and the
+        quality negatives.
+        """
+        pieces: list[PromptPiece] = []
+
+        def add(source: str, text: str) -> None:
+            text = " ".join(str(text).split())
+            if not text:
+                return
+            self._gate(source, text)
+            pieces.append(PromptPiece(source, text))
+
+        for fragment in self._positive_quality:
+            add("quality", fragment)
+        add("scene", _SCENE_ANCHOR)
+
+        for group in catalog.groups():  # stable (order, id)
+            if not group.render:  # render:false groups are chat-side (tone, ...)
+                continue
+            for source, fragment in self._scene_group_fragments(record, group):
+                add(source, fragment)
+
+        for key in SCENE_FREE_TEXT_KEYS:
+            add(f"free_text.{key}", record.free_text.get(key, ""))
+
+        kept = self._dedupe_pieces(pieces)
+        positive = ", ".join(p.text for p in kept)
+        self._gate_adjacency(kept)
+
+        negative = ", ".join(self._dedupe(
+            self._negative_safety + self._negative_scene + self._negative_quality
+        ))
         return AssembledPrompt(positive, negative, tuple(kept))
 
     # -- internals --------------------------------------------------------------
@@ -282,6 +343,24 @@ class PromptAssembler:
         if value is not None:
             option = group.get_option(value)
             if option is not None:
+                yield (f"selections.{group.id}", option.prompt)
+
+    @staticmethod
+    def _scene_group_fragments(record: BuilderRecord, group: OptionGroup):
+        """(source, fragment) pairs a scene record yields for one group.
+        Selection/tag only — the bundled builder catalogs define no numeric
+        groups and a ``BuilderRecord`` has no sliders field, so the numeric
+        branch of ``_group_fragments`` is deliberately absent here."""
+        if group.multi:
+            for value in record.tags.get(group.id, ()):
+                option = group.get_option(value)
+                if option is not None and option.prompt:
+                    yield (f"tags.{group.id}.{value}", option.prompt)
+            return
+        value = record.selections.get(group.id)
+        if value is not None:
+            option = group.get_option(value)
+            if option is not None and option.prompt:
                 yield (f"selections.{group.id}", option.prompt)
 
     @staticmethod

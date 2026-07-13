@@ -1,0 +1,22 @@
+{
+  "groups": [
+    {
+      "id": "time_of_day",
+      "label": "Time of day",
+      "kind": "single",
+      "field": "time_of_day",
+      "order": 21,
+      "section": "Scene",
+      "render": true,
+      "options": [
+        { "id": "dawn", "label": "Dawn", "prompt": "dawn, sunrise, soft morning light" },
+        { "id": "morning", "label": "Morning", "prompt": "morning, daylight" },
+        { "id": "noon", "label": "Midday", "prompt": "midday, bright daylight" },
+        { "id": "afternoon", "label": "Afternoon", "prompt": "afternoon, warm light" },
+        { "id": "dusk", "label": "Dusk", "prompt": "dusk, sunset, golden hour" },
+        { "id": "night", "label": "Night", "prompt": "night, dark, moonlight" },
+        { "id": "midnight", "label": "Midnight", "prompt": "midnight, deep night, stars" }
+      ]
+    }
+  ]
+}

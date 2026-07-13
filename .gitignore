@@ -13,3 +13,7 @@ models/
 # sets, catalogs) — user data produced by the app, like settings/logs above.
 # The 3c validation set for 3d training lives here on THIS machine only.
 data/characters/
+# Runtime builder data (Stage 5: personas/scenes/events/scenarios + generated
+# scene backgrounds) — user data produced by the app, like data/characters/.
+# The BUNDLED builder option files live under app/data/builders/ and ARE tracked.
+data/builders/

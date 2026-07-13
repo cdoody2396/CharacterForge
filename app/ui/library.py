@@ -59,6 +59,7 @@ from ..model import (
     ContentBlocked,
     InvalidId,
     OptionCatalog,
+    resolve_within,
 )
 
 def _now_iso() -> str:
@@ -119,28 +120,14 @@ def resolve_contained(
     INSIDE the character's own directory, else None. Mirrors the use-time
     rules of ImageService._resolve_reference (NUL reject, no '..'/absolute/
     drive components, containment after resolve() collapses symlinks) —
-    stored paths are hand-editable, so they are untrusted every time."""
-    text = str(raw or "").strip()
-    if not text or "\x00" in text:
-        return None
+    stored paths are hand-editable, so they are untrusted every time. The
+    containment rule itself lives in ``store.resolve_within`` (shared with the
+    Stage-5 builder store)."""
     try:
-        char_dir = store.char_dir(character_id).resolve()
+        char_dir = store.char_dir(character_id)
     except (InvalidId, ValueError, OSError):
         return None
-    candidate = Path(text)
-    if ".." in candidate.parts:
-        return None
-    if candidate.is_absolute() or candidate.drive or candidate.anchor:
-        return None
-    try:
-        resolved = (char_dir / candidate).resolve()
-    except (OSError, ValueError):
-        return None
-    if not (resolved == char_dir or char_dir in resolved.parents):
-        return None
-    if not resolved.is_file():
-        return None
-    return resolved
+    return resolve_within(char_dir, raw)
 
 
 def _tree_size(path: Path) -> int:

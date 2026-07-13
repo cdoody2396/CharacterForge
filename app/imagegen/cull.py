@@ -205,6 +205,64 @@ class CullToolkit:
 ToolkitFactory = Callable[[Settings, "Path | None", bool], CullToolkit]
 
 
+@dataclass
+class ClassifierToolkit:
+    """Just the Layer-2 pixel classifier (§11), built alone for callers that
+    gate generated pixels but need none of the face-embedding stack — Stage 5
+    background generation. ``close()`` frees it best-effort."""
+
+    classifier: ContentClassifier
+    closer: Callable[[], None] | None = None
+
+    def close(self) -> None:
+        if self.closer is not None:
+            try:
+                self.closer()
+            except Exception:
+                pass
+
+
+# A classifier factory takes (settings) and returns a ClassifierToolkit, or
+# raises CullUnavailable. Injected into ImageService like ToolkitFactory so the
+# background flow is sandbox-verifiable with a fake.
+ClassifierFactory = Callable[[Settings], ClassifierToolkit]
+
+
+def preflight_classifier(settings: Settings) -> str | None:
+    """Cheap, import-free existence check for JUST the Layer-2 classifier
+    (mirrors preflight_matte's classifier half). None = ready."""
+    cc = content_classifier_dir(settings)
+    if cc is None or not cc.is_dir():
+        return "classifier_unavailable"
+    return None
+
+
+def _default_classifier_factory(settings: Settings) -> ClassifierToolkit:
+    """Build ONLY the Layer-2 classifier, fully offline (the matte factory's
+    classifier half). CPU ONNX => zero VRAM; it coexists with a loaded SDXL
+    slot (the confirm_vetted / matte precedent), so a background can be
+    classified without unloading the engine."""
+    kind = preflight_classifier(settings)
+    if kind is not None:
+        raise CullUnavailable(kind)
+
+    import os
+
+    os.environ.setdefault("HF_HOME", str(content_classifier_dir(settings)))
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
+    classifier = _ImgutilsContentClassifier(_load_minor_tags())
+
+    def _closer() -> None:
+        import gc
+
+        gc.collect()
+
+    return ClassifierToolkit(classifier=classifier, closer=_closer)
+
+
 # -- pure cull logic (sandbox-verifiable; no heavy deps) ---------------------
 
 

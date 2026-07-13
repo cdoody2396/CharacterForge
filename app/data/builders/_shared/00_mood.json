@@ -1,0 +1,23 @@
+{
+  "groups": [
+    {
+      "id": "mood",
+      "label": "Mood / Atmosphere",
+      "kind": "single",
+      "field": "mood",
+      "order": 10,
+      "section": "Mood",
+      "render": true,
+      "options": [
+        { "id": "cozy", "label": "Cozy", "prompt": "cozy, warm atmosphere" },
+        { "id": "romantic", "label": "Romantic", "prompt": "romantic atmosphere" },
+        { "id": "tense", "label": "Tense", "prompt": "tense atmosphere" },
+        { "id": "serene", "label": "Serene", "prompt": "serene, peaceful atmosphere" },
+        { "id": "mysterious", "label": "Mysterious", "prompt": "mysterious atmosphere" },
+        { "id": "lively", "label": "Lively", "prompt": "lively, vibrant atmosphere" },
+        { "id": "melancholic", "label": "Melancholic", "prompt": "melancholic atmosphere" },
+        { "id": "sensual", "label": "Sensual", "prompt": "sensual atmosphere" }
+      ]
+    }
+  ]
+}

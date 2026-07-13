@@ -1,0 +1,23 @@
+{
+  "groups": [
+    {
+      "id": "themes",
+      "label": "Themes",
+      "kind": "tags",
+      "field": "themes",
+      "order": 12,
+      "section": "Themes",
+      "render": false,
+      "options": [
+        { "id": "romance", "label": "Romance", "prompt": "romance" },
+        { "id": "tension", "label": "Tension", "prompt": "tension" },
+        { "id": "mystery", "label": "Mystery", "prompt": "mystery" },
+        { "id": "comedy", "label": "Comedy", "prompt": "comedy" },
+        { "id": "drama", "label": "Drama", "prompt": "drama" },
+        { "id": "slice_of_life", "label": "Slice of life", "prompt": "slice of life" },
+        { "id": "adventure", "label": "Adventure", "prompt": "adventure" },
+        { "id": "conflict", "label": "Conflict", "prompt": "conflict" }
+      ]
+    }
+  ]
+}

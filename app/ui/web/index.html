@@ -14,7 +14,7 @@
     <button class="nav-item active" data-view="home">Home</button>
     <button class="nav-item" data-view="create">Create</button>
     <button class="nav-item" data-view="library">Library</button>
-    <button class="nav-item" disabled title="Stage 5">Scenes</button>
+    <button class="nav-item" data-view="builders">Scenes</button>
     <button class="nav-item" disabled title="Stage 6">Chat</button>
     <div class="spacer"></div>
     <div id="stage-tag">loading…</div>
@@ -125,10 +125,41 @@
       </section>
       <div id="lib-list"><!-- rendered by library.js --></div>
     </div>
+
+    <div class="view" id="view-builders" hidden>
+      <section class="card">
+        <div class="creator-head-row">
+          <h1>Scenes &amp; Builders</h1>
+          <button type="button" id="bld-reload" class="ghost" title="Re-scan builder option files">Reload options</button>
+        </div>
+        <p class="hint">Author the context characters interact within — personas, scenes, events, scenarios. Scenes generate a background you can composite a character over. All free text passes the content filter; a scenario requires an approved consent frame.</p>
+        <div class="seg" id="bld-kind-tabs">
+          <button type="button" class="on" data-kind="persona">Personas</button>
+          <button type="button" data-kind="scene">Scenes</button>
+          <button type="button" data-kind="event">Events</button>
+          <button type="button" data-kind="scenario">Scenarios</button>
+        </div>
+        <div id="bld-alerts"></div>
+        <div class="lib-toolbar">
+          <button type="button" id="bld-new" class="accent">New</button>
+          <span id="bld-status" class="feedback" role="status" aria-live="polite"></span>
+        </div>
+      </section>
+      <div id="bld-list"><!-- rendered by builders.js --></div>
+      <section class="card" id="bld-editor" hidden><!-- rendered by builders.js --></section>
+
+      <section class="card" id="composite-card">
+        <h2>Compositing preview</h2>
+        <p class="hint">Place a matted character frame over a scene background — or toggle the background off for the character alone (transparent). Compositing runs locally; background generation needs the image model.</p>
+        <div id="composite-controls"><!-- rendered by builders.js --></div>
+        <div id="composite-preview" class="composite-preview"></div>
+      </section>
+    </div>
   </main>
 </div>
 <script src="app.js"></script>
 <script src="creator.js"></script>
 <script src="library.js"></script>
+<script src="builders.js"></script>
 </body>
 </html>

@@ -1,0 +1,23 @@
+{
+  "groups": [
+    {
+      "id": "archetype",
+      "label": "Archetype",
+      "kind": "single",
+      "field": "archetype",
+      "order": 40,
+      "section": "Persona",
+      "render": false,
+      "options": [
+        { "id": "confidant", "label": "Confidant", "prompt": "a trusted confidant" },
+        { "id": "rival", "label": "Rival", "prompt": "a rival" },
+        { "id": "mentor", "label": "Mentor", "prompt": "a mentor" },
+        { "id": "admirer", "label": "Admirer", "prompt": "an admirer" },
+        { "id": "stranger", "label": "Stranger", "prompt": "an intriguing stranger" },
+        { "id": "companion", "label": "Companion", "prompt": "a loyal companion" },
+        { "id": "authority", "label": "Authority", "prompt": "a figure of authority" },
+        { "id": "protege", "label": "Protégé", "prompt": "a protégé" }
+      ]
+    }
+  ]
+}

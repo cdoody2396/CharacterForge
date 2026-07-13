@@ -696,19 +696,22 @@ def test_startup_resets_a_stale_vram_slot(tmp_path, monkeypatch):
 
 def test_build_services_wires_library_over_the_shared_store(tmp_path,
                                                             monkeypatch):
-    # Stage-4 wiring: build_services returns the 6-tuple and the LibraryService
-    # shares the creator's store + live catalog (a wiring regression in
-    # main.py would otherwise pass the hand-wired conftest fixtures).
+    # Wiring: build_services returns the 7-tuple (Stage-5 adds the builder
+    # service) and the LibraryService shares the creator's store + live catalog
+    # (a wiring regression in main.py would otherwise pass the hand-wired
+    # conftest fixtures).
     import app.main as app_main
+    from app.ui.builders import BuilderService
     from app.ui.library import LibraryService
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setattr(app_main, "DATA_DIR", data_dir)
     result = app_main.build_services()
-    assert len(result) == 6
-    settings, audit, content_filter, creator, images, library = result
+    assert len(result) == 7
+    settings, audit, content_filter, creator, images, library, builders = result
     assert isinstance(library, LibraryService)
+    assert isinstance(builders, BuilderService)
     # shared store: a character created via the creator is visible to library
     created = creator.create_character(
         {"mode": "quick", "name": "Wired", "age": 22})

@@ -1,0 +1,21 @@
+{
+  "groups": [
+    {
+      "id": "demeanor",
+      "label": "Demeanor",
+      "kind": "single",
+      "field": "demeanor",
+      "order": 41,
+      "section": "Persona",
+      "render": false,
+      "options": [
+        { "id": "warm", "label": "Warm", "prompt": "warm and approachable" },
+        { "id": "cool", "label": "Cool", "prompt": "cool and composed" },
+        { "id": "playful", "label": "Playful", "prompt": "playful" },
+        { "id": "intense", "label": "Intense", "prompt": "intense" },
+        { "id": "teasing", "label": "Teasing", "prompt": "teasing" },
+        { "id": "tender", "label": "Tender", "prompt": "tender" }
+      ]
+    }
+  ]
+}

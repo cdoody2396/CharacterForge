@@ -13,6 +13,7 @@ function showView(name) {
     view.hidden = view.id !== "view-" + name;
   if (name === "create") window.Creator.ensureStarted();
   if (name === "library") window.Library.refresh();
+  if (name === "builders") window.Builders.ensureStarted();
 }
 
 function bindNav() {
