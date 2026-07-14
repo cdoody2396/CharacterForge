@@ -43,6 +43,7 @@ class Api:
         images: ImageService,
         library: LibraryService,
         builders: BuilderService,
+        jobs: Any = None,
     ):
         self._settings = settings
         self._audit = audit
@@ -51,6 +52,19 @@ class Api:
         self._images = images
         self._library = library
         self._builders = builders
+        # The long-running-job runner (Stage 5.5a). The app builds it in
+        # main.run() (so its reap sweep runs at startup); a default is built
+        # here for headless tests, rooted beside the settings file.
+        if jobs is None:
+            from ..jobs import JobRunner
+
+            jobs = JobRunner(
+                Path(self._settings.path).parent / "jobs", audit=audit,
+                queue_size=self._settings.get("jobs.queue_size", 16),  # runner coerces
+                retain_seconds=self._settings.get("jobs.retain_seconds", 604800),
+                release=self._images.engine.unload,
+            )
+        self._jobs = jobs
 
     # -- diagnostics ----------------------------------------------------------
 
@@ -309,6 +323,12 @@ class Api:
         GPU."""
         return self._images.cache_status(character_id)
 
+    def image_catalog_states(self, character_id: Any = None) -> dict:
+        """The id-triple space (expressions / poses / wardrobe outfits) the
+        on-demand posing picker offers (5.5d). Ids only; the picker never
+        sends prompt text. No GPU."""
+        return self._images.catalog_state_space(character_id)
+
     def image_clear_cache(self, character_id: Any = None) -> dict:
         """Delete the on-demand cache (frames + mattes + manifest); evicted
         states regenerate on demand (3g, §14)."""
@@ -373,6 +393,14 @@ class Api:
         source list (catalog + cache). No GPU."""
         return self._images.matted_frames(character_id)
 
+    def image_frame_thumbnail(self, character_id: Any = None,
+                              frame_path: Any = None, max_px: Any = None) -> dict:
+        """A downscaled JPEG data URI for any frame the character owns
+        (base/identity/bootstrap/catalog/cache) — the 5.5d profile's visual
+        surface, since the page CSP forbids reading disk paths directly. A
+        missing/escaped path returns thumbnail:None. No GPU."""
+        return self._images.frame_thumbnail(character_id, frame_path, max_px)
+
     def scene_clear_background(self, scene_id: Any = None) -> dict:
         """Delete a scene's generated backgrounds (frames + manifest)."""
         return self._images.clear_background(scene_id)
@@ -386,6 +414,90 @@ class Api:
         All-[HERE]: runs in the sandbox."""
         return self._images.composite_frame(
             character_id, frame_ref, scene_id, background_ref, overrides)
+
+    # -- long-running jobs (Stage 5.5a) ------------------------------------------
+    #
+    # The slow image operations (train 31.5 min, bootstrap ~15 min, catalog
+    # 287 s) run as background jobs the UI polls at ~1 Hz. The synchronous
+    # image_*/scene_* bridges above are UNCHANGED (922 tests + every hardware
+    # harness call them) — these wrap the same methods so the window never
+    # blocks. `kind` picks the operation; `options` carries per-kind args.
+
+    def job_submit(self, kind: Any = None, target_id: Any = None,
+                   options: Any = None) -> dict:
+        """Start a heavy image operation in the background. Returns a job_id;
+        poll job_status(job_id) for progress + the eventual result."""
+        opts = options if isinstance(options, dict) else {}
+        built = self._build_job(kind, target_id, opts)
+        if isinstance(built, dict):
+            return built  # a structured {ok: False, kind: "job"} rejection
+        fn, total = built
+        return self._jobs.submit(str(kind), fn, target_id=_job_target(target_id),
+                                 total=total)
+
+    def job_status(self, job_id: Any = None) -> dict:
+        """Non-blocking status (phase, progress {done,total}, result|error).
+        The UI polls this ~1 Hz; the poll never blocks on a running generation."""
+        return self._jobs.status(job_id)
+
+    def job_cancel(self, job_id: Any = None) -> dict:
+        """Request cancellation: cooperative for the in-process loops (bootstrap
+        / catalog / on-demand, between frames) and Popen.terminate for a train
+        subprocess. The VRAM slot is released and a cancelled train preserves
+        the prior LoRA."""
+        return self._jobs.cancel(job_id)
+
+    def job_list(self) -> dict:
+        """Every job this session has seen (queued/running/terminal)."""
+        return self._jobs.list_jobs()
+
+    def _build_job(self, kind: Any, target_id: Any, opts: dict):
+        """Map a job kind onto the matching synchronous ImageService method,
+        returning ``(zero_arg_fn, total)`` or a structured rejection. `total`
+        is the progress denominator (frame count) where cheaply known, else
+        None — the token still counts completed frames either way."""
+        images = self._images
+        tid = target_id
+        explicit_total = opts.get("total")
+        total = int(explicit_total) if isinstance(explicit_total, int) else None
+        if kind == "avatar":
+            # The create-wizard reference step: N base candidates, varied
+            # seeds, the user picks one (5.5d). total = the candidate count so
+            # the progress bar reads done/N as the batch renders.
+            count = opts.get("count")
+            n = count if isinstance(count, int) and count > 0 else 4
+            return (lambda: images.generate_base_candidates(tid, count),
+                    total if total is not None else min(n, 8))
+        if kind == "identity":
+            # One IP-Adapter-steered render (5.5d identity panel). It loads the
+            # image model, so it runs as a job — never on the bridge thread.
+            seed, scale = opts.get("seed"), opts.get("scale")
+            return (lambda: images.generate_identity(tid, seed, scale),
+                    total if total is not None else 1)
+        if kind == "bootstrap":
+            batch, more = opts.get("batch"), bool(opts.get("more", False))
+            return (lambda: images.bootstrap_generate(tid, batch, more), total)
+        if kind == "train":
+            return (lambda: images.train_lora(tid), total)
+        if kind == "catalog":
+            return (lambda: images.generate_catalog(tid), total)
+        if kind == "on_demand":
+            state, force = opts.get("state"), bool(opts.get("force", False))
+            return (lambda: images.generate_on_demand(tid, state, force),
+                    total if total is not None else 1)
+        if kind == "matte":
+            force = bool(opts.get("force", False))
+            return (lambda: images.matte_catalog(tid, force), total)
+        if kind == "background":
+            seed = opts.get("seed")
+            return (lambda: images.generate_background(tid, seed),
+                    total if total is not None else 1)
+        return {"ok": False, "kind": "job", "reason": "invalid",
+                "error": f"unknown job kind: {kind!r}"}
+
+
+def _job_target(target_id: Any):
+    return target_id if isinstance(target_id, str) else None
 
 
 def _safe_int(value: Any, default: int) -> int:
@@ -425,6 +537,7 @@ def run_shell(
     images: ImageService,
     library: LibraryService,
     builders: BuilderService,
+    jobs: Any = None,
 ) -> None:
     """Open the window and block until it closes."""
     import webview
@@ -438,7 +551,7 @@ def run_shell(
         pass  # older pywebview without the settings dict
 
     api = Api(settings, audit, content_filter, creator, images, library,
-              builders)
+              builders, jobs=jobs)
     create_window(api, settings)
     # debug=False: no devtools, no extra windows. private_mode keeps the
     # webview from persisting browser-profile data.

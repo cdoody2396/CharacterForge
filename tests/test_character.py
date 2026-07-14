@@ -8,6 +8,7 @@ from app.model import (
     CharacterRecord,
     ContentBlocked,
     IdentityAnchor,
+    MissingRequiredSelection,
     load_option_catalog,
 )
 from app.model.age import AgeError
@@ -17,7 +18,10 @@ def make_record(**overrides):
     base = dict(
         name="Seraphina Vale",
         age=27,
-        selections={"race": "elf", "eye_color": "violet", "chest_size": "medium"},
+        selections={"race": "elf", "gender_presentation": "feminine",
+                    "skin_tone": "fair", "hair_color": "silver",
+                    "hair_style": "long", "eye_color": "violet",
+                    "body_type": "athletic", "chest_size": "medium"},
         tags={"traits": ["confident", "witty"], "outfit": ["gown", "lingerie"]},
         sliders={"height": 172, "weight": 60, "muscle": 35},
         free_text={
@@ -200,6 +204,44 @@ def test_validate_against_catalog_clean():
     catalog = load_option_catalog()
     issues = make_record().validate_against(catalog)
     assert issues == [], issues
+
+
+# -- 5.5c required-selection construction gate --------------------------------
+
+
+def test_create_gated_on_required_groups():
+    catalog = load_option_catalog()
+    req = catalog.required_group_ids()
+    full = {g: catalog.get(g).options[0].id for g in req}
+    # complete -> constructs
+    rec = CharacterRecord.create("Whole", 25, selections=full,
+                                 required_groups=req)
+    assert set(rec.selections) >= set(req)
+    # drop one -> unconstructable, and the exception names the missing group
+    partial = dict(full)
+    del partial["eye_color"]
+    with pytest.raises(MissingRequiredSelection) as exc:
+        CharacterRecord.create("Partial", 25, selections=partial,
+                               required_groups=req)
+    assert exc.value.group_id == "eye_color"
+
+
+def test_raw_construction_and_load_are_not_gated():
+    # the gate is on deliberate creation; a bare .create() (no required set)
+    # and from_dict (load) must stay ungated so legacy records still load
+    rec = CharacterRecord.create("Bare", 25)          # no required_groups
+    assert rec.selections == {}
+    restored = CharacterRecord.from_dict(rec.to_dict())  # load path
+    assert restored.selections == {}
+
+
+def test_validate_against_flags_missing_required():
+    catalog = load_option_catalog()
+    # a record missing the render-identity minimum lints it (the soft path a
+    # loaded legacy record travels)
+    rec = CharacterRecord.create("Loaded", 25, selections={"race": "human"})
+    issues = " ".join(rec.validate_against(catalog))
+    assert "required" in issues and "eye_color" in issues
 
 
 def test_validate_against_catalog_flags_unknown_options():

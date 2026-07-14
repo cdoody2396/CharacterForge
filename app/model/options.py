@@ -20,6 +20,13 @@ File format (one JSON object per file):
           "order": 10,                 # sort hint for the creator
           "section": "Identity",       # creator page section (non-anatomy)
           "quick": true,               # include in the quick-create path
+          "required": true,            # (5.5c) a character cannot be
+                                       # constructed without a value; a
+                                       # required group MUST be quick, else a
+                                       # load-time format error
+          "widget": "picker",          # (5.5c) explicit creator-widget
+                                       # override (segmented|chips|swatch|
+                                       # picker|slider); omit to derive
           "render": true,              # feed this group's prompt fragments
                                        # into image prompts (default true;
                                        # false for non-visual groups such as
@@ -27,7 +34,9 @@ File format (one JSON object per file):
           "options": [                 # for single/multi/tags
             {"id": "human", "label": "Human", "prompt": "human",
              "aliases": ["person"], "tags": ["mammal"],
-             "color": "#c99b6f"}       # optional swatch hint for the UI
+             "color": "#c99b6f",       # optional swatch hint for the UI
+             "image": "thumbs/human.png"}  # (5.5c) optional picker thumbnail,
+                                       # relative to the option directory
           ],
           "min": 140, "max": 220,      # for slider/number
           "step": 1, "default": 170, "unit": "cm",
@@ -84,6 +93,12 @@ VALID_KINDS = SELECTION_KINDS + NUMERIC_KINDS
 # else — anatomy above all — is categorical by frozen decision.
 RESERVED_NUMERIC_FIELDS = ("height", "weight", "muscle", "age")
 
+# 5.5c §15 delta: the closed set of explicit widget overrides an option file
+# may name. Anything else is a load-time format error (an author typo must not
+# silently fall back to a derived widget). ``None`` means "derive" — see
+# :func:`derive_widget`.
+VALID_WIDGETS = ("segmented", "chips", "swatch", "picker", "slider")
+
 
 class OptionFormatError(ValueError):
     """A data file does not conform to the option-definition format."""
@@ -135,6 +150,11 @@ class OptionItem:
     aliases: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     color: str | None = None  # optional swatch hint for the creator UI
+    # 5.5c §15 delta: an optional per-option thumbnail, a path relative to the
+    # option directory it was authored in. Containment-resolved to a data URI
+    # at describe() time (creator.py) so a picker tile can show it; the raw
+    # string is stored here untrusted, never opened by the model layer.
+    image: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict, *, group_id: str) -> "OptionItem":
@@ -144,6 +164,7 @@ class OptionItem:
             raise OptionFormatError(f"group {group_id!r}: an option is missing 'id'")
         oid = str(data["id"])
         color = data.get("color")
+        image = data.get("image")
         return cls(
             id=oid,
             label=str(data.get("label", oid)),
@@ -151,6 +172,7 @@ class OptionItem:
             aliases=_str_tuple(data.get("aliases", ()), group_id, oid, "aliases"),
             tags=_str_tuple(data.get("tags", ()), group_id, oid, "tags"),
             color=str(color) if color is not None else None,
+            image=str(image) if image is not None else None,
         )
 
     def to_dict(self) -> dict:
@@ -163,6 +185,8 @@ class OptionItem:
             out["tags"] = list(self.tags)
         if self.color:
             out["color"] = self.color
+        if self.image:
+            out["image"] = self.image
         return out
 
 
@@ -178,6 +202,9 @@ class OptionGroup:
     section: str | None = None  # creator page section (non-anatomy groups)
     quick: bool = False  # include in the quick-create path
     render: bool = True  # fragments feed image prompts (False = chat-only)
+    # 5.5c §15 delta:
+    required: bool = False  # a character cannot be constructed without a value
+    widget: str | None = None  # explicit creator-widget override; None = derive
     options: list[OptionItem] = field(default_factory=list)
     # numeric (slider/number) properties
     min: float | None = None
@@ -200,6 +227,10 @@ class OptionGroup:
     @property
     def multi(self) -> bool:
         return self.kind in ("multi", "tags")
+
+    @property
+    def has_colors(self) -> bool:
+        return any(o.color for o in self.options)
 
     def option_ids(self) -> list[str]:
         return [o.id for o in self.options]
@@ -286,6 +317,63 @@ def _check_numeric_reservation(group: OptionGroup, source: str) -> None:
         )
 
 
+def derive_widget(group: OptionGroup) -> str:
+    """The creator widget for a group (5.5c). An explicit ``group.widget``
+    override wins; otherwise derive from kind / colors / option count. This is
+    the sole widget authority — the front-end renders whatever this returns, so
+    ``<select>`` (the old ``length > 8 && !colors`` heuristic) is gone: a large
+    colorless list becomes a searchable ``picker`` instead.
+
+        explicit widget            -> that widget
+        kind slider|number         -> slider
+        any option carries color   -> swatch
+        kind single, <= 5 options  -> segmented
+        kind single|multi|tags, <=12 -> chips
+        otherwise                  -> picker
+    """
+    if group.widget:
+        return group.widget
+    if group.is_numeric:
+        return "slider"
+    if group.has_colors:
+        return "swatch"
+    n = len(group.options)
+    if group.kind == "single" and n <= 5:
+        return "segmented"
+    if n <= 12:
+        return "chips"
+    return "picker"
+
+
+def _coerce_widget(data: dict, source: str, group_id: str) -> str | None:
+    """Validate an explicit ``widget`` override at load time. Absent/None means
+    "derive"; anything outside the closed enum is a format error so an author
+    typo surfaces at load instead of silently falling back to derivation."""
+    if "widget" not in data or data["widget"] is None:
+        return None
+    widget = str(data["widget"])
+    if widget not in VALID_WIDGETS:
+        raise OptionFormatError(
+            f"{source}: group {group_id!r} has invalid widget {widget!r}; "
+            f"expected one of {VALID_WIDGETS}"
+        )
+    return widget
+
+
+def _check_required_quick(group: OptionGroup, source: str) -> None:
+    """5.5c structural rule: a ``required`` group MUST be a ``quick`` group.
+    The required set is the render-identity minimum, and quick-create is the
+    minimal path — a required group outside it would make quick-create
+    unsatisfiable. Runs after every assembly/merge so neither a new file nor an
+    extension fragment can flip one on without the other."""
+    if group.required and not group.quick:
+        raise OptionFormatError(
+            f"{source}: group {group.id!r} is required but not quick; a "
+            f"required group must be in the quick-create set (§15/5.5c) — "
+            f"quick-create would otherwise be unsatisfiable"
+        )
+
+
 def _opt_str(value: object) -> str | None:
     """Normalize an optional string property (region/attribute/unit/section):
     None stays None (explicit null clears), anything else becomes str."""
@@ -311,12 +399,23 @@ def _coerce_prompt_ranges(value: object, source: str, group_id: str) -> list[dic
         for key in ("min", "max"):
             if key in entry and entry[key] is not None:
                 try:
-                    rng[key] = float(entry[key])
-                except (TypeError, ValueError):
+                    value = float(entry[key])
+                except (TypeError, ValueError, OverflowError):
                     raise OptionFormatError(
                         f"{source}: group {group_id!r} prompt_ranges {key!r} "
                         f"must be numeric, got {entry[key]!r}"
                     ) from None
+                if not math.isfinite(value):
+                    # json.loads accepts Infinity/NaN; a non-finite bound rode
+                    # verbatim into the creator_catalog() payload once 5.5c
+                    # surfaced prompt_ranges for the slider band label — invalid
+                    # strict JSON that bricks the whole creator (the documented
+                    # non-finite-into-bridge hazard, matching _coerce_number).
+                    raise OptionFormatError(
+                        f"{source}: group {group_id!r} prompt_ranges {key!r} "
+                        f"must be finite, got {entry[key]!r}"
+                    )
+                rng[key] = value
         rng["prompt"] = str(entry.get("prompt", ""))
         out.append(rng)
     return out
@@ -348,6 +447,10 @@ def _merge_group(existing: OptionGroup, data: dict, source: str) -> None:
         existing.quick = bool(data["quick"])
     if "render" in data:
         existing.render = bool(data["render"])
+    if "required" in data:
+        existing.required = bool(data["required"])
+    if "widget" in data:
+        existing.widget = _coerce_widget(data, source, gid)
     if "order" in data and data["order"] is not None:
         existing.order = int(data["order"])
     for key in ("min", "max", "step", "default"):
@@ -371,6 +474,7 @@ def _merge_group(existing: OptionGroup, data: dict, source: str) -> None:
     existing.sources.append(source)
     _clamp_default(existing)
     _check_numeric_reservation(existing, source)
+    _check_required_quick(existing, source)
 
 
 def _new_group(data: dict, source: str) -> OptionGroup:
@@ -386,6 +490,8 @@ def _new_group(data: dict, source: str) -> OptionGroup:
         section=_opt_str(data.get("section")),
         quick=bool(data.get("quick", False)),
         render=bool(data.get("render", True)),
+        required=bool(data.get("required", False)),
+        widget=_coerce_widget(data, source, gid),
         min=_coerce_number(data, "min", source, gid),
         max=_coerce_number(data, "max", source, gid),
         step=_coerce_number(data, "step", source, gid),
@@ -399,6 +505,7 @@ def _new_group(data: dict, source: str) -> OptionGroup:
         group.options.append(OptionItem.from_dict(opt_data, group_id=gid))
     _clamp_default(group)
     _check_numeric_reservation(group, source)
+    _check_required_quick(group, source)
     return group
 
 
@@ -428,6 +535,13 @@ class OptionCatalog:
 
     def group_ids(self) -> list[str]:
         return [g.id for g in self.groups()]
+
+    def required_group_ids(self) -> tuple[str, ...]:
+        """The ids of groups a character cannot be constructed without (5.5c).
+        Every one is guaranteed ``quick`` by the load-time check, so the quick
+        path can always satisfy them. The record layer enforces the gate; this
+        is the catalog-derived required set it enforces against."""
+        return tuple(g.id for g in self.groups() if g.required)
 
     def groups(self) -> list[OptionGroup]:
         """All groups sorted by (order, id) for stable creator layout."""

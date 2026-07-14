@@ -71,9 +71,23 @@ def run() -> None:
     (settings, audit, content_filter, creator, images, library,
      builders) = build_services()
     audit.log("app_start", version=__version__, stage=STAGE)
+    # The long-running-job runner (Stage 5.5a): backgrounds the slow image
+    # operations so a 31-min train or 5-min catalog never hangs the window.
+    # Built here (before the shell) so its reap sweep runs at startup with the
+    # other two. release= force-frees the VRAM slot after every job — one heavy
+    # model at a time (§3), structural via the single worker + this release.
+    from .jobs import JobRunner
+
+    jobs = JobRunner(
+        DATA_DIR / "jobs", audit=audit,
+        queue_size=settings.get("jobs.queue_size", 16),  # runner coerces defensively
+        retain_seconds=settings.get("jobs.retain_seconds", 604800),
+        release=images.engine.unload,
+    )
     # Startup reconciliation sweeps: hard-kill orphans + the §14 LRU cap
-    # (Stage 4), and orphaned scene-background frames (Stage 5). Fail-safe by
-    # design; a fault here must never block the launch.
+    # (Stage 4), orphaned scene-background frames (Stage 5), and interrupted
+    # job records (Stage 5.5a). Fail-safe by design; a fault here must never
+    # block the launch.
     try:
         library.reconcile()
     except Exception:  # noqa: BLE001 — launch must proceed regardless
@@ -83,8 +97,12 @@ def run() -> None:
     except Exception:  # noqa: BLE001 — launch must proceed regardless
         audit.log("builder_reconcile_failed")
     try:
+        jobs.reconcile()
+    except Exception:  # noqa: BLE001 — launch must proceed regardless
+        audit.log("jobs_reconcile_failed")
+    try:
         shell.run_shell(settings, audit, content_filter, creator, images,
-                        library, builders)
+                        library, builders, jobs=jobs)
     finally:
         audit.log("app_exit", version=__version__)
 

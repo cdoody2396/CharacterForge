@@ -20,7 +20,9 @@ window.Builders = (function () {
     return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
   }
 
-  let currentKind = "persona";
+  // Scene is primary — the real image consumer beside the compositing studio
+  // (5.5f). Persona / event / scenario are frozen chat-context records.
+  let currentKind = "scene";
   const describeByKind = {};    // kind -> builder_describe payload
   let editing = null;           // builder id being edited, or null for new
   let started = false;

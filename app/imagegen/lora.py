@@ -265,21 +265,45 @@ class _KohyaSubprocessTrainer:
         # pins the child; encoding+errors pin the parent, replace never
         # raises over a log byte.
         env = {**os.environ, "PYTHONUTF8": "1"}
+        # Popen (not subprocess.run) so a job cancel can terminate the 31-min
+        # kohya subprocess (Stage 5.5a). A terminated child exits nonzero ->
+        # TrainFailed below -> train_lora returns before its os.replace, so the
+        # PRIOR LoRA is preserved (3d's replace-only-on-success invariant). The
+        # run()-equivalent semantics (capture, encoding, timeout, creationflags,
+        # env, cwd) are preserved exactly; only the wait mechanism changes.
+        from ..jobs import current_token
+
+        proc = subprocess.Popen(
+            [self._python, str(script), "--config_file", str(config_path)],
+            cwd=str(self._trainer_dir),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            encoding="utf-8", errors="replace",
+            creationflags=creationflags,
+            env=env,
+        )
+        token = current_token()
+        if token is not None:
+            token.register(proc.terminate)  # cancel -> Popen.terminate()
         try:
-            proc = subprocess.run(
-                [self._python, str(script), "--config_file", str(config_path)],
-                cwd=str(self._trainer_dir),
-                capture_output=True, encoding="utf-8", errors="replace",
-                timeout=request.config.timeout_seconds,
-                creationflags=creationflags,
-                env=env,
-            )
+            # communicate() concurrently drains BOTH pipes — sd-scripts' heavy
+            # bilingual logs would deadlock a hand-rolled poll()/read loop.
+            _stdout, stderr = proc.communicate(timeout=request.config.timeout_seconds)
         except subprocess.TimeoutExpired as exc:
+            # Popen.communicate does NOT reap on timeout — kill + drain, else a
+            # multi-GB training subprocess and its pipe threads leak.
+            proc.kill()
+            try:
+                proc.communicate()
+            except OSError:
+                pass
             raise TrainFailed(
                 f"training timed out after {request.config.timeout_seconds}s"
             ) from exc
+        finally:
+            if token is not None:
+                token.deregister()  # a stale hook must not fire on a later job
         if proc.returncode != 0:
-            tail = (proc.stderr or "")[-2000:]
+            tail = (stderr or "")[-2000:]
             raise TrainFailed(f"trainer exited {proc.returncode}: {tail}")
         # Collect the output. Prefer the exact name; fall back to the newest
         # .safetensors in output_dir — some sd-scripts versions append a

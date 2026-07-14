@@ -2,10 +2,27 @@
 exercised by launching the app; these tests pin the bridge's contract."""
 
 import json
+import time
 
 import pytest
 
 from app.ui.shell import WEB_DIR, Api
+
+# The render-identity minimum every character now needs (5.5c). Bridge setup
+# creates route through make_char() so a quick character constructs.
+SEL = {"race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
+       "hair_color": "black", "hair_style": "short", "eye_color": "brown",
+       "body_type": "average"}
+
+
+def make_char(api, name, age=24, **over):
+    """Create a quick character through the bridge, carrying the required set
+    (a `selections` override merges on top). Returns the create result."""
+    sel = dict(SEL)
+    sel.update(over.pop("selections", {}))
+    payload = {"mode": "quick", "name": name, "age": age, "selections": sel}
+    payload.update(over)
+    return api.create_character(payload)
 
 
 @pytest.fixture()
@@ -93,15 +110,22 @@ def test_creator_catalog_via_bridge(api):
     assert any(g["id"] == "race" for g in cat["groups"])
     assert cat["min_age"] == 20
     assert [f["key"] for f in cat["free_text_fields"]]
+    # 5.5c: the required-selection set + derived widgets ride the same payload
+    assert "gender_presentation" in cat["required_groups"]
+    race = next(g for g in cat["groups"] if g["id"] == "race")
+    assert race["widget"] == "picker" and race["required"] is True
 
 
 def test_create_character_via_bridge(api, creator):
-    res = api.create_character(
-        {"mode": "quick", "name": "Bridge Test", "age": 25,
-         "selections": {"race": "elf"}}
-    )
+    res = make_char(api, "Bridge Test", 25, selections={"race": "elf"})
     assert res["ok"] is True
     assert creator.store.exists(res["id"])
+
+
+def test_create_character_missing_required_via_bridge(api):
+    # a quick create without the render-identity minimum is rejected (5.5c)
+    res = api.create_character({"mode": "quick", "name": "Bare", "age": 25})
+    assert res["ok"] is False and res["kind"] == "required"
 
 
 def test_create_character_bridge_rejects_non_dict(api):
@@ -126,22 +150,20 @@ def test_image_engine_status_via_bridge(api):
 
 
 def test_image_prompt_preview_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Render Probe", "age": 24,
-         "selections": {"race": "elf", "gender_presentation": "feminine"}}
-    )
+    created = make_char(api, "Render Probe", selections={"race": "elf"})
     assert created["ok"] is True
     res = api.image_prompt_preview(created["id"])
     assert res["ok"] is True
     assert "solo, 1girl" in res["positive"]
     assert "elf, pointed ears" in res["positive"]
     assert "loli" in res["negative"]
+    # 5.5b: token accounting rides the same bridge — structured-unavailable on
+    # the sandbox (no pipeline_config_dir set), never a raise.
+    assert res["tokens"]["available"] is False
 
 
 def test_image_generate_base_via_bridge_reports_engine_unavailable(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Render Probe Two", "age": 24}
-    )
+    created = make_char(api, "Render Probe Two")
     res = api.image_generate_base(created["id"])
     assert res["ok"] is False
     assert res["kind"] == "engine"  # sandbox: no checkpoint/GPU — structured
@@ -156,17 +178,13 @@ def test_image_engine_release_via_bridge(api):
 
 
 def test_image_reference_status_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Ref Bridge", "age": 24}
-    )
+    created = make_char(api, "Ref Bridge")
     res = api.image_reference_status(created["id"])
     assert res["ok"] is True and res["has_reference"] is False
 
 
 def test_image_set_and_clear_reference_via_bridge(api, creator):
-    created = api.create_character(
-        {"mode": "quick", "name": "Ref Set Bridge", "age": 24}
-    )
+    created = make_char(api, "Ref Set Bridge")
     # no real engine wired on the api fixture's service -> generate_base gives a
     # structured engine error on the sandbox; forge a frame directly instead.
     cid = created["id"]
@@ -182,17 +200,13 @@ def test_image_set_and_clear_reference_via_bridge(api, creator):
 
 
 def test_image_set_reference_rejects_traversal_via_bridge(api, creator):
-    created = api.create_character(
-        {"mode": "quick", "name": "Ref Evil Bridge", "age": 24}
-    )
+    created = make_char(api, "Ref Evil Bridge")
     res = api.image_set_reference(created["id"], "../../secret.png")
     assert res["ok"] is False and res["kind"] == "reference_invalid"
 
 
 def test_image_generate_identity_via_bridge_no_reference(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Ident Bridge", "age": 24}
-    )
+    created = make_char(api, "Ident Bridge")
     res = api.image_generate_identity(created["id"])
     assert res["ok"] is False and res["kind"] == "no_reference"
 
@@ -201,35 +215,27 @@ def test_image_generate_identity_via_bridge_no_reference(api):
 
 
 def test_image_bootstrap_status_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Boot Status", "age": 24}
-    )
+    created = make_char(api, "Boot Status")
     res = api.image_bootstrap_status(created["id"])
     assert res["ok"] is True
     assert res["phase"] is None and res["has_vetted"] is False
 
 
 def test_image_bootstrap_generate_via_bridge_no_reference(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Boot Gen", "age": 24}
-    )
+    created = make_char(api, "Boot Gen")
     res = api.image_bootstrap_generate(created["id"], 4)
     assert res["ok"] is False and res["kind"] == "no_reference"
 
 
 def test_image_bootstrap_recull_and_confirm_without_bootstrap(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Boot None", "age": 24}
-    )
+    created = make_char(api, "Boot None")
     cid = created["id"]
     assert api.image_bootstrap_recull(cid)["kind"] == "no_bootstrap"
     assert api.image_confirm_vetted(cid, ["x"])["kind"] == "no_bootstrap"
 
 
 def test_image_clear_bootstrap_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Boot Clear", "age": 24}
-    )
+    created = make_char(api, "Boot Clear")
     res = api.image_clear_bootstrap(created["id"], "all")
     assert res["ok"] is True and res["scope"] == "all"
 
@@ -238,25 +244,19 @@ def test_image_clear_bootstrap_via_bridge(api):
 
 
 def test_image_lora_status_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Lora Status", "age": 24}
-    )
+    created = make_char(api, "Lora Status")
     res = api.image_lora_status(created["id"])
     assert res["ok"] is True and res["has_lora"] is False
 
 
 def test_image_train_lora_via_bridge_no_vetted(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Lora Train", "age": 24}
-    )
+    created = make_char(api, "Lora Train")
     res = api.image_train_lora(created["id"])
     assert res["ok"] is False and res["kind"] == "no_vetted"
 
 
 def test_image_clear_lora_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Lora Clear", "age": 24}
-    )
+    created = make_char(api, "Lora Clear")
     res = api.image_clear_lora(created["id"])
     assert res["ok"] is True and res["removed"] is False
 
@@ -265,25 +265,19 @@ def test_image_clear_lora_via_bridge(api):
 
 
 def test_image_catalog_status_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Cat Status", "age": 24}
-    )
+    created = make_char(api, "Cat Status")
     res = api.image_catalog_status(created["id"])
     assert res["ok"] is True and res["has_catalog"] is False and res["frames"] == 0
 
 
 def test_image_generate_catalog_via_bridge_no_lora(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Cat Gen", "age": 24}
-    )
+    created = make_char(api, "Cat Gen")
     res = api.image_generate_catalog(created["id"])
     assert res["ok"] is False and res["kind"] == "no_lora"
 
 
 def test_image_clear_catalog_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Cat Clear", "age": 24}
-    )
+    created = make_char(api, "Cat Clear")
     res = api.image_clear_catalog(created["id"])
     assert res["ok"] is True and res["removed"] is False
 
@@ -292,18 +286,14 @@ def test_image_clear_catalog_via_bridge(api):
 
 
 def test_image_matte_status_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Matte Status", "age": 24}
-    )
+    created = make_char(api, "Matte Status")
     res = api.image_matte_status(created["id"])
     assert res["ok"] is True and res["has_catalog"] is False
     assert res["ready"] is False and res["missing"] == "matting_model_missing"
 
 
 def test_image_matte_catalog_via_bridge_no_catalog(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Matte Gen", "age": 24}
-    )
+    created = make_char(api, "Matte Gen")
     res = api.image_matte_catalog(created["id"])
     assert res["ok"] is False and res["kind"] == "no_catalog"
 
@@ -318,18 +308,14 @@ def test_image_matte_bridges_default_args(api):
 
 
 def test_image_cache_status_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Cache Status", "age": 24}
-    )
+    created = make_char(api, "Cache Status")
     res = api.image_cache_status(created["id"])
     assert res["ok"] is True and res["has_cache"] is False and res["frames"] == 0
     assert res["matte_ready"] is False
 
 
 def test_image_generate_on_demand_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Cache Gen", "age": 24}
-    )
+    created = make_char(api, "Cache Gen")
     # malformed state is structured invalid; a valid novel state on an
     # unpromoted character is structured no_lora — no traceback either way
     res = api.image_generate_on_demand(created["id"], "not-a-dict")
@@ -341,9 +327,7 @@ def test_image_generate_on_demand_via_bridge(api):
 
 
 def test_image_clear_cache_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Cache Clear", "age": 24}
-    )
+    created = make_char(api, "Cache Clear")
     res = api.image_clear_cache(created["id"])
     assert res["ok"] is True and res["removed"] is False
 
@@ -360,9 +344,7 @@ def test_image_cache_bridges_default_args(api):
 def test_library_list_via_bridge(api):
     res = api.library_list()
     assert res["ok"] is True and res["characters"] == []
-    created = api.create_character(
-        {"mode": "quick", "name": "Lib Bridge", "age": 24}
-    )
+    created = make_char(api, "Lib Bridge")
     res = api.library_list()
     assert res["count"] == 1
     row = res["characters"][0]
@@ -371,31 +353,25 @@ def test_library_list_via_bridge(api):
 
 
 def test_library_get_and_update_via_bridge(api, creator):
-    created = api.create_character(
-        {"mode": "quick", "name": "Lib Edit", "age": 24,
-         "selections": {"race": "elf"}}
-    )
+    created = make_char(api, "Lib Edit", selections={"race": "elf"})
     got = api.library_get(created["id"])
-    assert got["ok"] is True and got["selections"] == {"race": "elf"}
-    res = api.library_update(created["id"],
-                             {"name": "Lib Edited", "age": 26})
+    assert got["ok"] is True and got["selections"] == {**SEL, "race": "elf"}
+    # the edit re-runs the required gate, so it must carry the required set
+    res = api.library_update(
+        created["id"], {"name": "Lib Edited", "age": 26, "selections": dict(SEL)})
     assert res["ok"] is True and res["name"] == "Lib Edited"
     assert creator.store.load(created["id"]).name == "Lib Edited"
 
 
 def test_library_delete_via_bridge(api, creator):
-    created = api.create_character(
-        {"mode": "quick", "name": "Lib Doomed", "age": 24}
-    )
+    created = make_char(api, "Lib Doomed")
     res = api.library_delete(created["id"])
     assert res["ok"] is True and res["removed"] is True
     assert not creator.store.exists(created["id"])
 
 
 def test_library_thumbnail_via_bridge(api):
-    created = api.create_character(
-        {"mode": "quick", "name": "Lib Thumb", "age": 24}
-    )
+    created = make_char(api, "Lib Thumb")
     res = api.library_thumbnail(created["id"])
     assert res["ok"] is True and res["thumbnail"] is None
 
@@ -414,6 +390,15 @@ def test_library_bridges_default_args(api):
 
 def test_web_assets_include_library():
     assert (WEB_DIR / "library.js").exists()
+
+
+def test_web_assets_include_jobs_and_profile():
+    # 5.5d front-end: the job client + the character profile view.
+    assert (WEB_DIR / "jobs.js").exists()
+    assert (WEB_DIR / "profile.js").exists()
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    assert 'src="jobs.js"' in html and 'src="profile.js"' in html
+    assert 'id="view-profile"' in html
 
 
 # -- Stage-5 builder + scene + compositing bridges --------------------------
@@ -474,3 +459,97 @@ def test_image_matted_frames_bridge(api):
 
 def test_web_assets_include_builders():
     assert (WEB_DIR / "builders.js").exists()
+
+
+# -- long-running jobs (Stage 5.5a) ------------------------------------------
+
+
+def test_job_submit_unknown_kind_is_structured(api):
+    res = api.job_submit("not-a-kind", "some-id")
+    assert res["ok"] is False and res["kind"] == "job"
+    assert res["reason"] == "invalid"
+
+
+def test_job_status_unknown_id_is_structured(api):
+    res = api.job_status("0" * 32)
+    assert res["ok"] is False and res["kind"] == "job"
+
+
+def test_job_cancel_unknown_id_is_structured(api):
+    res = api.job_cancel("nope")
+    assert res["ok"] is False and res["kind"] == "job"
+
+
+def test_job_list_shape(api):
+    res = api.job_list()
+    assert res["ok"] is True and res["kind"] == "job"
+    assert isinstance(res["jobs"], list)
+
+
+def test_catalog_job_runs_through_the_bridge_and_reports(api):
+    # End-to-end bridge path: submit -> poll -> terminal. On the sandbox a
+    # catalog needs a trained LoRA, so it fails fast with a structured result
+    # (no GPU needed) — proving the job survives, reports, and is JSON-safe.
+    created = make_char(api, "Job Probe")
+    sub = api.job_submit("catalog", created["id"])
+    assert sub["ok"] is True and "job_id" in sub
+    deadline = time.time() + 5
+    status = api.job_status(sub["job_id"])
+    while status.get("status") not in ("done", "cancelled", "error") and time.time() < deadline:
+        time.sleep(0.02)
+        status = api.job_status(sub["job_id"])
+    assert status["status"] == "error"           # no_lora on a fresh character
+    assert status["result"]["kind"] == "no_lora"
+    json.dumps(status, allow_nan=False)          # never NaN/Infinity
+
+
+def test_job_bridges_never_emit_nonfinite(api):
+    created = make_char(api, "Job JSON")
+    sub = api.job_submit("on_demand", created["id"], {"state": {"pose": "standing"}})
+    json.dumps(api.job_status(sub["job_id"]), allow_nan=False)
+    json.dumps(api.job_list(), allow_nan=False)
+
+
+def test_avatar_job_runs_through_the_bridge(api):
+    # 5.5d create-wizard reference step: N base candidates as a job. On the
+    # sandbox (no GPU) it terminates with a structured engine result — proving
+    # the avatar kind dispatches and the job survives + reports.
+    created = make_char(api, "Avatar Probe")
+    sub = api.job_submit("avatar", created["id"], {"count": 3})
+    assert sub["ok"] is True and "job_id" in sub
+    deadline = time.time() + 5
+    status = api.job_status(sub["job_id"])
+    while status.get("status") not in ("done", "cancelled", "error") \
+            and time.time() < deadline:
+        time.sleep(0.02)
+        status = api.job_status(sub["job_id"])
+    assert status["status"] == "error"
+    assert status["result"]["kind"] == "engine"   # engine-unavailable, no CUDA
+    json.dumps(status, allow_nan=False)
+
+
+def test_identity_job_dispatches_through_the_bridge(api):
+    created = make_char(api, "Identity Job")
+    sub = api.job_submit("identity", created["id"], {"scale": 0.45})
+    assert sub["ok"] is True and "job_id" in sub
+    deadline = time.time() + 5
+    status = api.job_status(sub["job_id"])
+    while status.get("status") not in ("done", "cancelled", "error") \
+            and time.time() < deadline:
+        time.sleep(0.02)
+        status = api.job_status(sub["job_id"])
+    assert status["status"] == "error"
+    # no reference set on a fresh character -> structured no_reference
+    assert status["result"]["kind"] == "no_reference"
+    json.dumps(status, allow_nan=False)
+
+
+def test_image_frame_thumbnail_via_bridge(api):
+    created = make_char(api, "Thumb Probe")
+    # no frame yet -> thumbnail None, never an error
+    res = api.image_frame_thumbnail(created["id"], "reference/nope.png")
+    assert res["ok"] is True and res["thumbnail"] is None
+    # unknown character is a structured not_found
+    assert api.image_frame_thumbnail("ghost", "x.png")["kind"] == "not_found"
+    # default args never raise
+    assert api.image_frame_thumbnail()["kind"] == "invalid"

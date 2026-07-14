@@ -34,9 +34,17 @@ def audit_events(audit):
             path.read_text(encoding="utf-8").splitlines()]
 
 
+# The render-identity minimum every character now needs (5.5c).
+SEL = {"race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
+       "hair_color": "black", "hair_style": "short", "eye_color": "brown",
+       "body_type": "average"}
+
+
 def _create(creator, name="Lib Test", age=25, **kw):
+    sel = dict(SEL)
+    sel.update(kw.pop("selections", {}))
     res = creator.create_character(
-        {"mode": "quick", "name": name, "age": age, **kw})
+        {"mode": "quick", "name": name, "age": age, "selections": sel, **kw})
     assert res["ok"] is True
     return res["id"]
 
@@ -314,7 +322,11 @@ def test_list_summary_fields(creator, library):
     assert row["recommend_delete"] is False
 
 
-def test_list_footprint_measures_disk(creator, library):
+def test_list_footprint_reads_cached_value(creator, library, images):
+    # 5.5e: the library reads the CACHED footprint off the record, NOT a
+    # per-row disk walk (~10k stat()s at 200 characters). Files dropped outside
+    # an artifact op read 0 until a recompute; refresh_footprint (what every
+    # artifact op + the reconcile sweep call) is what populates it.
     cid = _create(creator)
     cdir = creator.store.char_dir(cid)
     (cdir / "lora").mkdir()
@@ -323,26 +335,58 @@ def test_list_footprint_measures_disk(creator, library):
     (cdir / "catalog" / "f.png").write_bytes(b"\0" * 200)
     (cdir / "cache").mkdir()
     (cdir / "cache" / "c.png").write_bytes(b"\0" * 100)
-    row = library.list_characters()["characters"][0]
-    fp = row["footprint"]
+    assert library.list_characters()["characters"][0]["footprint"][
+        "total_bytes"] == 0
+    images.refresh_footprint(cid)
+    fp = library.list_characters()["characters"][0]["footprint"]
     assert fp["lora_bytes"] == 300
     assert fp["catalog_bytes"] == 200
     assert fp["cache_bytes"] == 100
     assert fp["total_bytes"] == 600
 
 
-def test_list_recommendation_past_cache_threshold(creator, library, settings):
+def test_list_recommendation_past_cache_threshold(creator, library, images,
+                                                  settings):
     cid = _create(creator)
     cdir = creator.store.char_dir(cid)
     (cdir / "cache").mkdir()
     (cdir / "cache" / "big.png").write_bytes(b"\0" * (8 * MB + 1024))
     settings.set("library.recommend_cache_bytes", 8 * MB, save=False)
+    images.refresh_footprint(cid)  # 5.5e: cache the footprint the flag reads
     row = library.list_characters()["characters"][0]
     assert row["recommend_delete"] is True
     # under the threshold it stays quiet
     (cdir / "cache" / "big.png").write_bytes(b"\0" * 1024)
+    images.refresh_footprint(cid)
     row = library.list_characters()["characters"][0]
     assert row["recommend_delete"] is False
+
+
+def test_list_returns_resolved_tag_labels(creator, library):
+    # 5.5e: library_list carries the character's multi-select tags (archetype /
+    # distinctive features / traits / wardrobe) resolved to human labels so the
+    # UI can filter on them.
+    cid = _create(creator)
+    catalog = creator.catalog
+    record = creator.store.load(cid)
+    record.tags = {"archetype": ["warrior", "mage"], "traits": ["witty"],
+                   "distinctive_features": ["freckles"]}
+    creator.store.save(record)
+    row = next(r for r in library.list_characters()["characters"]
+               if r["id"] == cid)
+    tags = row["tags"]
+    for gid, oid in [("archetype", "warrior"), ("archetype", "mage"),
+                     ("traits", "witty"), ("distinctive_features", "freckles")]:
+        assert catalog.get(gid).get_option(oid).label in tags
+    # deduped and stable
+    assert len(tags) == len(set(tags))
+    # an option id no longer in the catalog falls back to the raw id (the
+    # record stays the source of truth, §15)
+    record.tags = {"archetype": ["removed_class"]}
+    creator.store.save(record)
+    row = next(r for r in library.list_characters()["characters"]
+               if r["id"] == cid)
+    assert row["tags"] == ["removed_class"]
 
 
 def test_list_identity_flags(creator, library):
@@ -416,9 +460,10 @@ def test_list_reports_stale_and_frames(creator, library):
 
 
 def test_get_character_round_trips_form_fields(creator, library):
+    selections = {**SEL, "race": "elf"}
     res = creator.create_character({
         "mode": "detailed", "name": "Edit Me", "age": 27,
-        "selections": {"race": "elf"},
+        "selections": selections,
         "tags": {"traits": ["curious"]},
         "sliders": {"height": 172},
         "free_text": {"backstory": "A quiet scholar of the old library."},
@@ -427,7 +472,7 @@ def test_get_character_round_trips_form_fields(creator, library):
     got = library.get_character(res["id"])
     assert got["ok"] is True
     assert got["name"] == "Edit Me" and got["age"] == 27
-    assert got["selections"] == {"race": "elf"}
+    assert got["selections"] == selections
     assert got["tags"] == {"traits": ["curious"]}
     assert got["sliders"] == {"height": 172}
     assert got["free_text"] == {

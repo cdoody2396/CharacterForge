@@ -180,20 +180,82 @@ def test_kohya_subprocess_pins_utf8_both_directions(tmp_path, monkeypatch):
     )
     captured = {}
 
-    class _Proc:
-        returncode = 0
-        stderr = ""
-
     import subprocess
 
-    def fake_run(cmd, **kwargs):
-        captured.update(kwargs, cmd=cmd)
-        (tmp_path / "out" / "identity.safetensors").write_bytes(b"\0")
-        return _Proc()
+    class _Proc:
+        returncode = 0
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+        def __init__(self, cmd, **kwargs):
+            captured.update(kwargs, cmd=cmd)
+            (tmp_path / "out" / "identity.safetensors").write_bytes(b"\0")
+
+        def communicate(self, timeout=None):
+            captured["timeout"] = timeout
+            return ("", "")
+
+        def terminate(self):  # pragma: no cover - not hit on the happy path
+            pass
+
+    # 5.5a: the trainer is now Popen (so a job cancel can terminate the
+    # subprocess), but the run()-equivalent contract is preserved exactly.
+    monkeypatch.setattr(subprocess, "Popen", _Proc)
     out = trainer.train(request)
     assert out.name == "identity.safetensors"
     assert captured["env"]["PYTHONUTF8"] == "1"
     assert captured["encoding"] == "utf-8"
     assert captured["errors"] == "replace"
+    assert captured["stdout"] is subprocess.PIPE
+    assert captured["stderr"] is subprocess.PIPE
+    assert captured["timeout"] == request.config.timeout_seconds
+    assert captured["cwd"] == str(tmp_path)
+
+
+def test_kohya_subprocess_cancel_terminates_and_preserves_via_trainfailed(
+        tmp_path, monkeypatch):
+    # Stage 5.5a: a job cancel must terminate the kohya subprocess. The job's
+    # CancelToken is published on the thread-local; train() registers
+    # Popen.terminate on it. A terminated child exits nonzero -> TrainFailed,
+    # so train_lora returns before its os.replace and the prior LoRA survives.
+    from app.imagegen.lora import (
+        TrainConfig, TrainFailed, TrainRequest, _KohyaSubprocessTrainer,
+    )
+    from app.jobs import CancelToken, set_current_token
+
+    (tmp_path / "sdxl_train_network.py").write_text("# stub", encoding="utf-8")
+    trainer = _KohyaSubprocessTrainer(tmp_path, "python")
+    request = TrainRequest(
+        dataset_dir=tmp_path / "ds", output_dir=tmp_path / "out",
+        output_name="identity", base_checkpoint=tmp_path / "ckpt.safetensors",
+        trigger="abc123", config=TrainConfig(),
+    )
+    events = {"terminated": False}
+
+    import subprocess
+
+    class _Proc:
+        returncode = 0
+
+        def __init__(self, cmd, **kwargs):
+            pass
+
+        def terminate(self):
+            events["terminated"] = True
+            self.returncode = -15  # SIGTERM -> nonzero -> TrainFailed
+
+        def communicate(self, timeout=None):
+            return ("", "trainer terminated")
+
+    monkeypatch.setattr(subprocess, "Popen", _Proc)
+
+    token = CancelToken()
+    token.cancel()                 # cancel BEFORE train registers the hook
+    set_current_token(token)       # publish it on this thread
+    try:
+        with pytest.raises(TrainFailed):
+            trainer.train(request)  # register() fires terminate immediately
+    finally:
+        set_current_token(None)
+    assert events["terminated"] is True
+    # No LoRA file was produced -> train_lora's os.replace is never reached
+    # (the prior LoRA is untouched — the 3d replace-only-on-success invariant).
+    assert not (tmp_path / "out" / "identity.safetensors").exists()

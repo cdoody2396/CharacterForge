@@ -11,19 +11,126 @@
 <div id="root">
   <nav id="sidebar">
     <div class="brand">Character<span>Forge</span></div>
-    <button class="nav-item active" data-view="home">Home</button>
-    <button class="nav-item" data-view="create">Create</button>
-    <button class="nav-item" data-view="library">Library</button>
+    <button class="nav-item active" data-view="library">Library</button>
     <button class="nav-item" data-view="builders">Scenes</button>
     <button class="nav-item" disabled title="Stage 6">Chat</button>
     <div class="spacer"></div>
+    <button class="nav-item gear" data-view="settings" title="Settings &amp; developer tools">⚙ Settings</button>
     <div id="stage-tag">loading…</div>
   </nav>
 
   <main id="content">
-    <div class="view" id="view-home">
+    <!-- Library is the landing view (characters are the app's nouns, 5.5f) -->
+    <div class="view" id="view-library">
+      <section class="card">
+        <div class="creator-head-row">
+          <h1>Library</h1>
+          <div class="head-actions">
+            <button type="button" id="lib-create" class="accent" title="Create a new character">New character</button>
+            <button type="button" id="lib-refresh" class="ghost" title="Re-read the character store">Refresh</button>
+          </div>
+        </div>
+        <p class="hint">Manage saved characters — edit, regenerate, reclaim disk. Editing re-runs every gate; visual edits mark the catalog stale and regeneration is offered, never forced.</p>
+        <div class="lib-toolbar">
+          <input type="search" id="lib-search" placeholder="Search names…">
+          <select id="lib-sort">
+            <option value="updated_desc">Recently updated</option>
+            <option value="created_desc">Newest first</option>
+            <option value="name_asc">Name A–Z</option>
+            <option value="footprint_desc">Largest on disk</option>
+          </select>
+          <select id="lib-filter">
+            <option value="all">All characters</option>
+            <option value="lora">Has identity LoRA</option>
+            <option value="stale">Stale catalog</option>
+            <option value="recommend">Cleanup recommended</option>
+            <option value="broken">Broken records</option>
+          </select>
+          <div class="seg" id="lib-layout" title="Layout">
+            <button type="button" class="on" data-layout="grid">Grid</button>
+            <button type="button" data-layout="list">List</button>
+          </div>
+        </div>
+        <div id="lib-tagfilter" class="tag-filter"><!-- tag chips (5.5e) --></div>
+        <p class="hint" id="lib-summary"></p>
+        <p id="lib-status" class="feedback" role="status" aria-live="polite"></p>
+        <div id="lib-job"><!-- catalog-regeneration job widget --></div>
+      </section>
+      <div id="lib-list" class="lib-list grid"><!-- rendered by library.js --></div>
+    </div>
+
+    <!-- Character profile (5.5d): the container the image-pipeline panels live
+         in. Reached from a Library card's "Open"; rendered by profile.js. -->
+    <div class="view" id="view-profile" hidden>
+      <section class="card" id="profile-header"><!-- rendered by profile.js --></section>
+      <div id="profile-job"><!-- the active job's progress + cancel widget --></div>
+      <div id="profile-root"><!-- identity / promotion / catalog / posing panels --></div>
+    </div>
+
+    <!-- Create / edit — reached from the Library "New character" button or the
+         per-character Edit action (5.5f). -->
+    <div class="view" id="view-create" hidden>
+      <section class="card">
+        <div class="creator-head-row">
+          <h1 id="creator-title">Create a character</h1>
+          <div class="seg" id="mode-toggle">
+            <button type="button" class="on" data-mode="quick">Quick</button>
+            <button type="button" data-mode="detailed">Detailed</button>
+          </div>
+        </div>
+        <p class="hint" id="mode-hint"></p>
+        <div id="creator-alerts"></div>
+      </section>
+
+      <div class="creator-layout">
+        <div id="creator-form"><!-- rendered by creator.js from the option catalog --></div>
+        <aside class="card" id="creator-prompt"><!-- live prompt preview (creator.js) --></aside>
+      </div>
+
+      <section class="card savebar">
+        <button type="button" id="create-save">Create character</button>
+        <button type="button" id="creator-cancel-edit" class="ghost" hidden title="Discard changes and return to the library">Back to library</button>
+        <button type="button" id="creator-reset" class="ghost" title="Clear the form">Start over</button>
+        <button type="button" id="creator-reload" class="ghost" title="Re-scan the option data files">Reload options</button>
+        <span id="create-feedback" class="feedback"></span>
+      </section>
+    </div>
+
+    <div class="view" id="view-builders" hidden>
+      <section class="card">
+        <div class="creator-head-row">
+          <h1>Scenes &amp; Builders</h1>
+          <button type="button" id="bld-reload" class="ghost" title="Re-scan builder option files">Reload options</button>
+        </div>
+        <p class="hint"><strong>Scenes</strong> generate a background you can composite a character over — the image consumer, beside the compositing studio below. <strong>Personas, events, and scenarios</strong> are chat-context records read in Stage 6. All free text passes the content filter; a scenario requires an approved consent frame.</p>
+        <div class="seg" id="bld-kind-tabs">
+          <button type="button" class="on" data-kind="scene">Scenes</button>
+          <button type="button" data-kind="persona">Personas</button>
+          <button type="button" data-kind="event">Events</button>
+          <button type="button" data-kind="scenario">Scenarios</button>
+        </div>
+        <div id="bld-alerts"></div>
+        <div class="lib-toolbar">
+          <button type="button" id="bld-new" class="accent">New</button>
+          <span id="bld-status" class="feedback" role="status" aria-live="polite"></span>
+        </div>
+      </section>
+      <div id="bld-list"><!-- rendered by builders.js --></div>
+      <section class="card" id="bld-editor" hidden><!-- rendered by builders.js --></section>
+
+      <section class="card" id="composite-card">
+        <h2>Compositing preview</h2>
+        <p class="hint">Place a matted character frame over a scene background — or toggle the background off for the character alone (transparent). Compositing runs locally; background generation needs the image model.</p>
+        <div id="composite-controls"><!-- rendered by builders.js --></div>
+        <div id="composite-preview" class="composite-preview"></div>
+      </section>
+    </div>
+
+    <!-- Settings (behind the gear, 5.5f): model-swap scaffold + the Layer-1
+         filter tester as a developer panel. -->
+    <div class="view" id="view-settings" hidden>
       <section class="card" id="status-card">
-        <h1>CharacterForge</h1>
+        <h1>Settings</h1>
         <p id="status-line">Connecting to backend…</p>
         <dl class="kv">
           <dt>Version</dt><dd id="info-version">—</dd>
@@ -33,7 +140,7 @@
       </section>
 
       <section class="card">
-        <h2>Settings</h2>
+        <h2>Models</h2>
         <p class="hint">Model-swap scaffold — checkpoints are picked at Stages 3 and 6; the variant toggle is live now and persists.</p>
         <div class="setting-row">
           <label for="image-variant">Image model variant</label>
@@ -56,110 +163,41 @@
         <p id="settings-feedback" class="feedback"></p>
       </section>
 
-      <section class="card">
-        <h2>Safety filter check (Layer 1)</h2>
-        <p class="hint">Every free-text field routes through this exact gate. Try any text against a context.</p>
-        <div class="filter-row">
-          <select id="filter-context">
-            <option value="freetext">freetext (backstory, personality)</option>
-            <option value="chat">chat</option>
-            <option value="prompt">image prompt</option>
-            <option value="name">name</option>
-          </select>
-          <button id="filter-run">Check</button>
-        </div>
-        <textarea id="filter-input" rows="4" placeholder="Text to check…"></textarea>
-        <div id="filter-result" class="filter-result"></div>
+      <section class="card" id="engine-card">
+        <h2>Image engine</h2>
+        <p class="hint">Diagnostic — the image model's load state and the §3 single-model VRAM slot. Heavy image ops run as background jobs; this frees the slot manually if one is left resident.</p>
+        <p id="engine-status" class="feedback" role="status">—</p>
+        <button type="button" id="engine-release" class="ghost">Release VRAM slot</button>
       </section>
-    </div>
 
-    <div class="view" id="view-create" hidden>
-      <section class="card">
-        <div class="creator-head-row">
-          <h1 id="creator-title">Create a character</h1>
-          <div class="seg" id="mode-toggle">
-            <button type="button" class="on" data-mode="quick">Quick</button>
-            <button type="button" data-mode="detailed">Detailed</button>
+      <details class="card" id="dev-panel">
+        <summary class="section-summary">Developer tools</summary>
+        <div class="fields" style="margin-top:12px">
+          <div>
+            <h2>Safety filter check (Layer 1)</h2>
+            <p class="hint">Every free-text field routes through this exact gate. Try any text against a context.</p>
+            <div class="filter-row">
+              <select id="filter-context">
+                <option value="freetext">freetext (backstory, personality)</option>
+                <option value="chat">chat</option>
+                <option value="prompt">image prompt</option>
+                <option value="name">name</option>
+              </select>
+              <button id="filter-run">Check</button>
+            </div>
+            <textarea id="filter-input" rows="4" placeholder="Text to check…"></textarea>
+            <div id="filter-result" class="filter-result"></div>
           </div>
         </div>
-        <p class="hint" id="mode-hint"></p>
-        <div id="creator-alerts"></div>
-      </section>
-
-      <div id="creator-form"><!-- rendered by creator.js from the option catalog --></div>
-
-      <section class="card savebar">
-        <button type="button" id="create-save">Create character</button>
-        <button type="button" id="creator-cancel-edit" class="ghost" hidden title="Discard changes and return to the library">Back to library</button>
-        <button type="button" id="creator-reset" class="ghost" title="Clear the form">Start over</button>
-        <button type="button" id="creator-reload" class="ghost" title="Re-scan the option data files">Reload options</button>
-        <span id="create-feedback" class="feedback"></span>
-      </section>
-    </div>
-
-    <div class="view" id="view-library" hidden>
-      <section class="card">
-        <div class="creator-head-row">
-          <h1>Library</h1>
-          <button type="button" id="lib-refresh" class="ghost" title="Re-read the character store">Refresh</button>
-        </div>
-        <p class="hint">Manage saved characters — edit, regenerate, reclaim disk. Editing re-runs every gate; visual edits mark the catalog stale and regeneration is offered, never forced.</p>
-        <div class="lib-toolbar">
-          <input type="search" id="lib-search" placeholder="Search names…">
-          <select id="lib-sort">
-            <option value="updated_desc">Recently updated</option>
-            <option value="created_desc">Newest first</option>
-            <option value="name_asc">Name A–Z</option>
-            <option value="footprint_desc">Largest on disk</option>
-          </select>
-          <select id="lib-filter">
-            <option value="all">All characters</option>
-            <option value="lora">Has identity LoRA</option>
-            <option value="stale">Stale catalog</option>
-            <option value="recommend">Cleanup recommended</option>
-            <option value="broken">Broken records</option>
-          </select>
-        </div>
-        <p class="hint" id="lib-summary"></p>
-        <p id="lib-status" class="feedback" role="status" aria-live="polite"></p>
-      </section>
-      <div id="lib-list"><!-- rendered by library.js --></div>
-    </div>
-
-    <div class="view" id="view-builders" hidden>
-      <section class="card">
-        <div class="creator-head-row">
-          <h1>Scenes &amp; Builders</h1>
-          <button type="button" id="bld-reload" class="ghost" title="Re-scan builder option files">Reload options</button>
-        </div>
-        <p class="hint">Author the context characters interact within — personas, scenes, events, scenarios. Scenes generate a background you can composite a character over. All free text passes the content filter; a scenario requires an approved consent frame.</p>
-        <div class="seg" id="bld-kind-tabs">
-          <button type="button" class="on" data-kind="persona">Personas</button>
-          <button type="button" data-kind="scene">Scenes</button>
-          <button type="button" data-kind="event">Events</button>
-          <button type="button" data-kind="scenario">Scenarios</button>
-        </div>
-        <div id="bld-alerts"></div>
-        <div class="lib-toolbar">
-          <button type="button" id="bld-new" class="accent">New</button>
-          <span id="bld-status" class="feedback" role="status" aria-live="polite"></span>
-        </div>
-      </section>
-      <div id="bld-list"><!-- rendered by builders.js --></div>
-      <section class="card" id="bld-editor" hidden><!-- rendered by builders.js --></section>
-
-      <section class="card" id="composite-card">
-        <h2>Compositing preview</h2>
-        <p class="hint">Place a matted character frame over a scene background — or toggle the background off for the character alone (transparent). Compositing runs locally; background generation needs the image model.</p>
-        <div id="composite-controls"><!-- rendered by builders.js --></div>
-        <div id="composite-preview" class="composite-preview"></div>
-      </section>
+      </details>
     </div>
   </main>
 </div>
 <script src="app.js"></script>
+<script src="jobs.js"></script>
 <script src="creator.js"></script>
 <script src="library.js"></script>
+<script src="profile.js"></script>
 <script src="builders.js"></script>
 </body>
 </html>

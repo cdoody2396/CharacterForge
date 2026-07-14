@@ -1,6 +1,8 @@
 /* Shell page: navigation, status readout, live settings, Layer-1 filter
-   panel. The creator view is rendered by creator.js. All backend access
-   goes through window.pywebview.api (shell.py Api). */
+   panel. Library is the landing view; Create is reached from its "New
+   character" button and settings live behind the gear (5.5f). The creator
+   view is rendered by creator.js. All backend access goes through
+   window.pywebview.api (shell.py Api). */
 
 "use strict";
 
@@ -14,6 +16,37 @@ function showView(name) {
   if (name === "create") window.Creator.ensureStarted();
   if (name === "library") window.Library.refresh();
   if (name === "builders") window.Builders.ensureStarted();
+  if (name === "settings") loadEngineStatus();
+}
+
+// Image-engine diagnostic (Settings): load state + the §3 VRAM slot. Re-homed
+// here after 5.5f deleted the Home view that used to surface it.
+async function loadEngineStatus() {
+  const out = $("engine-status");
+  if (!out) return;
+  try {
+    const s = await window.pywebview.api.image_engine_status();
+    out.className = "feedback";
+    out.textContent = s.loaded
+      ? `Loaded (${s.loaded_mode || "?"}) · checkpoint ${s.checkpoint_exists ? "present" : "missing"}.`
+      : `Idle · checkpoint ${s.checkpoint_exists ? "present" : "missing"} · ` +
+        `torch ${s.torch_installed ? "installed" : "absent"}.`;
+  } catch (err) {
+    out.className = "feedback error";
+    out.textContent = "Engine status unavailable: " + err;
+  }
+}
+
+function bindEngine() {
+  const btn = $("engine-release");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try { await window.pywebview.api.image_engine_release(); }
+    catch (_) { /* best-effort */ }
+    btn.disabled = false;
+    loadEngineStatus();
+  });
 }
 
 function bindNav() {
@@ -21,6 +54,13 @@ function bindNav() {
   for (const btn of buttons) {
     btn.addEventListener("click", () => showView(btn.dataset.view));
   }
+  // "New character" lives on the Library toolbar now (5.5f): reset the creator
+  // to a fresh form, then navigate to it.
+  const create = $("lib-create");
+  if (create) create.addEventListener("click", () => {
+    window.Creator.beginCreate();
+    showView("create");
+  });
 }
 
 // Programmatic navigation for cross-view flows (library → edit → library).
@@ -108,4 +148,8 @@ window.addEventListener("pywebviewready", async () => {
     $("settings-feedback").classList.add("error");
   }
   bindFilterPanel();
+  bindEngine();
+  // Library is the landing view (5.5f): initialize it now so the app opens on
+  // the character list rather than a blank card.
+  showView("library");
 });

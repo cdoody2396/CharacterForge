@@ -151,7 +151,12 @@ def test_generate_background_engine_unavailable_is_structured(creator, settings,
 
 def _character_with_matte(creator):
     """Create a character and give it one matted catalog frame."""
-    created = creator.create_character({"mode": "quick", "name": "Ada", "age": 30})
+    created = creator.create_character({
+        "mode": "quick", "name": "Ada", "age": 30,
+        "selections": {"race": "human", "gender_presentation": "feminine",
+                       "skin_tone": "fair", "hair_color": "black",
+                       "hair_style": "short", "eye_color": "brown",
+                       "body_type": "average"}})
     cid = created["id"]
     store = creator.store
     mdir = store.matted_dir(cid)

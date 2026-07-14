@@ -26,6 +26,7 @@ from .character import (
     Footprint,
     IdentityAnchor,
     InvalidId,
+    MissingRequiredSelection,
     SCHEMA_VERSION,
     ensure_safe_id,
 )
@@ -48,6 +49,8 @@ from .options import (
     OptionFormatError,
     OptionGroup,
     OptionItem,
+    VALID_WIDGETS,
+    derive_widget,
     load_builder_catalog,
     load_option_catalog,
 )
@@ -61,6 +64,7 @@ __all__ = [
     "CharacterRecord",
     "ContentBlocked",
     "InvalidId",
+    "MissingRequiredSelection",
     "ensure_safe_id",
     "IdentityAnchor",
     "Footprint",
@@ -76,6 +80,8 @@ __all__ = [
     "OptionGroup",
     "OptionItem",
     "OptionFormatError",
+    "VALID_WIDGETS",
+    "derive_widget",
     "load_option_catalog",
     "load_builder_catalog",
     "CharacterStore",

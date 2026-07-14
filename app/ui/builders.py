@@ -163,7 +163,10 @@ class BuilderService:
             "ok": True,
             "kind": k,
             "kinds": list(BUILDER_KINDS),
-            "groups": [_group_payload(g) for g in catalog.groups()],
+            # builder options carry no picker thumbnails — a null image
+            # resolver keeps the shared payload shape without a file read
+            "groups": [_group_payload(g, lambda _rel: None)
+                       for g in catalog.groups()],
             "free_text_fields": [dict(f) for f in BUILDER_FREE_TEXT_FIELDS.get(k, ())],
             "name_max_len": NAME_MAX_LEN,
             "text_max_len": TEXT_MAX_LEN,

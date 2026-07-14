@@ -24,10 +24,35 @@ def write_options(directory, name, payload) -> None:
     (directory / name).write_text(json.dumps(payload), encoding="utf-8")
 
 
-def quick_payload(**overrides) -> dict:
-    payload = {"mode": "quick", "name": "Seren", "age": 27}
+# The render-identity minimum every character now needs (5.5c). A quick
+# payload carries all of them so construction succeeds; a caller's `selections`
+# override MERGES on top (so it can add/replace a group without dropping the
+# required set — pass an explicit "" to clear one and exercise the gate).
+REQUIRED_SELECTIONS = {
+    "race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
+    "hair_color": "black", "hair_style": "short", "eye_color": "brown",
+    "body_type": "average",
+}
+
+
+def _with_required(payload: dict, overrides: dict) -> dict:
+    payload["selections"] = dict(REQUIRED_SELECTIONS)
+    if "selections" in overrides:
+        payload["selections"].update(overrides.pop("selections"))
     payload.update(overrides)
     return payload
+
+
+def quick_payload(**overrides) -> dict:
+    return _with_required({"mode": "quick", "name": "Seren", "age": 27},
+                          overrides)
+
+
+def edit_payload(**overrides) -> dict:
+    """An update payload carrying the render-identity minimum (5.5c): the
+    update path re-runs the required gate exactly like creation, so an edit
+    must supply the required set (a selections override merges on top)."""
+    return _with_required({"name": "Seren", "age": 27}, overrides)
 
 
 # -- option-format extensions (section / quick / color, §12 rule) -----------
@@ -54,7 +79,10 @@ def test_bundled_colors_parse():
 
 def test_merge_overrides_quick_and_section(tmp_path):
     write_options(tmp_path, "z_extend.json", {
-        "groups": [{"id": "race", "quick": False, "section": "Elsewhere"}]
+        # required must clear alongside quick (race is a required group now);
+        # a required-but-not-quick merge is itself a load-time format error.
+        "groups": [{"id": "race", "quick": False, "required": False,
+                    "section": "Elsewhere"}]
     })
     catalog = load_option_catalog([tmp_path], strict=True)
     assert catalog.get("race").quick is False
@@ -153,6 +181,30 @@ def test_prompt_ranges_validated_at_load(tmp_path):
         load_option_catalog([tmp_path], include_bundled=False, strict=True)
 
 
+def test_prompt_ranges_reject_non_finite_bounds(tmp_path, audit):
+    # 5.5c surfaced prompt_ranges on the creator_catalog() bridge (the slider
+    # band label); a hand-edited Infinity/NaN bound must be a load error, not
+    # invalid strict JSON that bricks the whole creator.
+    import json as _json
+
+    for bad in ("Infinity", "NaN"):
+        opt_dir = tmp_path / "data" / "options"
+        opt_dir.mkdir(parents=True, exist_ok=True)
+        (opt_dir / "r.json").write_text(
+            '{"groups":[{"id":"height","kind":"slider","field":"height",'
+            f'"prompt_ranges":[{{"min":{bad},"prompt":"x"}}]}}]}}',
+            encoding="utf-8")
+        # strict load rejects it outright
+        with pytest.raises(OptionFormatError, match="finite"):
+            load_option_catalog([opt_dir], strict=True)
+        # resilient load (the app path) records the skip AND keeps describe()
+        # strict-JSON-safe — one bad file cannot brick the whole creator
+        creator = build_creator(tmp_path / "data", audit)
+        desc = creator.describe()
+        _json.dumps(desc, allow_nan=False)  # raises if a non-finite slipped in
+        assert any(e["file"] == "r.json" for e in desc["errors"])
+
+
 def test_non_finite_bounds_rejected_at_load(tmp_path):
     # "inf"/"nan" bounds would skew clamp() and write non-spec JSON records
     write_options(tmp_path, "inf.json", {
@@ -215,6 +267,61 @@ def test_describe_shape(creator):
     assert [f["key"] for f in described["free_text_fields"]] == [
         f["key"] for f in FREE_TEXT_FIELDS]
     assert described["errors"] == []
+    # 5.5c: required set + derived widgets + slider band data ride the payload
+    assert set(described["required_groups"]) == {
+        "race", "gender_presentation", "skin_tone", "hair_color",
+        "hair_style", "eye_color", "body_type"}
+    assert by_id["race"]["required"] is True
+    assert by_id["race"]["widget"] == "picker"      # 13 colorless options
+    assert by_id["skin_tone"]["widget"] == "swatch"  # carries colors
+    assert by_id["height"]["prompt_ranges"]          # band labels for the slider
+
+
+def test_no_select_widget_ever_derived(creator):
+    # <select> is gone (5.5c): every group resolves to one of the five widgets
+    valid = {"segmented", "chips", "swatch", "picker", "slider"}
+    for g in creator.describe()["groups"]:
+        assert g["widget"] in valid
+
+
+def test_dropin_60_option_file_becomes_a_picker(tmp_path, audit):
+    # the §15 promise: a large drop-in surfaces as a searchable picker with no
+    # code change (the old length>8 -> <select> heuristic is gone)
+    data_dir = tmp_path / "data"
+    opts = [{"id": f"clan_{i}", "label": f"Clan {i}"} for i in range(60)]
+    write_options(data_dir / "options", "70_clans.json", {
+        "groups": [{"id": "clan", "label": "Clan", "kind": "single",
+                    "section": "Identity", "options": opts}]})
+    creator = build_creator(data_dir, audit)
+    clan = next(g for g in creator.describe()["groups"] if g["id"] == "clan")
+    assert clan["widget"] == "picker"
+    assert len(clan["options"]) == 60
+
+
+def test_option_image_resolves_to_data_uri_and_stays_contained(tmp_path, audit):
+    from base64 import b64decode
+
+    data_dir = tmp_path / "data"
+    opt_dir = data_dir / "options"
+    (opt_dir / "thumbs").mkdir(parents=True)
+    png = (b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    (opt_dir / "thumbs" / "a.png").write_bytes(png)
+    write_options(opt_dir, "80_pic.json", {
+        "groups": [{"id": "sigil", "label": "Sigil", "kind": "single",
+                    "section": "Identity", "options": [
+                        {"id": "have", "label": "Has", "image": "thumbs/a.png"},
+                        {"id": "gone", "label": "Missing", "image": "thumbs/x.png"},
+                        {"id": "evil", "label": "Escape",
+                         "image": "../../../secret.png"}]}]})
+    creator = build_creator(data_dir, audit)
+    sigil = next(g for g in creator.describe()["groups"] if g["id"] == "sigil")
+    by_id = {o["id"]: o for o in sigil["options"]}
+    # present file -> inline data URI with the real bytes
+    assert by_id["have"]["image"].startswith("data:image/png;base64,")
+    assert b64decode(by_id["have"]["image"].split(",", 1)[1]) == png
+    # missing file and a containment-escaping path -> no image, never a raise
+    assert "image" not in by_id["gone"]
+    assert "image" not in by_id["evil"]
 
 
 def test_describe_surfaces_option_file_errors(tmp_path, audit):
@@ -271,8 +378,17 @@ def test_quick_create_minimal_round_trips(creator):
     assert record.name == "Seren"
     assert int(record.age) == 27
     assert record.identity.has_lora is False  # quick = IP-Adapter tier (§6)
-    assert record.selections == {} and record.tags == {}
+    # the minimal quick record is now exactly the render-identity minimum (5.5c)
+    assert record.selections == REQUIRED_SELECTIONS and record.tags == {}
     assert record.validate_against(creator.catalog) == []
+
+
+def test_quick_create_missing_required_rejected(creator):
+    # drop one required group -> unconstructable (the render-identity minimum)
+    res = creator.create_character(quick_payload(selections={"eye_color": ""}))
+    assert res["ok"] is False
+    assert res["kind"] == "required"
+    assert res["field"] == "selections.eye_color"
 
 
 def test_quick_create_with_selections(creator):
@@ -293,7 +409,8 @@ def test_detailed_create_full_round_trips(creator):
         "age": 132,
         "selections": {
             "race": "tiefling", "gender_presentation": "feminine",
-            "body_type": "curvy", "chest_size": "large",
+            "skin_tone": "olive", "hair_color": "red", "hair_style": "long",
+            "eye_color": "gold", "body_type": "curvy", "chest_size": "large",
             "hip_size": "wide", "genital_config": "vulva",
             "disposition": "fiery", "voice": "sultry",
         },
@@ -424,11 +541,12 @@ def test_unknown_tag_option(creator):
 
 
 def test_empty_selection_and_tags_dropped(creator):
+    # an empty NON-required selection is dropped; the required set stays
     res = creator.create_character(quick_payload(
-        selections={"race": ""}, tags={"traits": []}))
+        selections={"chest_size": ""}, tags={"traits": []}))
     assert res["ok"] is True
     record = creator.store.load(res["id"])
-    assert record.selections == {} and record.tags == {}
+    assert record.selections == REQUIRED_SELECTIONS and record.tags == {}
 
 
 def test_slider_clamps_to_group_bounds(creator):
@@ -583,8 +701,10 @@ def test_creator_without_bundled_catalog(tmp_path, audit):
     creator = CreatorService(store=store, audit=audit, include_bundled=False)
     described = creator.describe()
     assert described["groups"] == []
-    # name+age alone still creates a valid record
-    res = creator.create_character(quick_payload())
+    assert described["required_groups"] == []  # no catalog -> nothing required
+    # name+age alone still creates a valid record (no groups exist to require,
+    # and none to select — a bare payload, not the bundled quick_payload)
+    res = creator.create_character({"mode": "quick", "name": "Seren", "age": 27})
     assert res["ok"] is True
 
 
@@ -638,15 +758,13 @@ def test_update_round_trips_and_preserves_immutables(creator, audit):
     created_at = record.created_at
     creator.store.save(record)
 
-    res = creator.update_character(cid, {
-        "name": "Seren Renamed", "age": 30,
-        "selections": {"race": "human"},
-    })
+    res = creator.update_character(cid, edit_payload(
+        name="Seren Renamed", age=30, selections={"race": "human"}))
     assert res["ok"] is True and res["id"] == cid
     assert res["name"] == "Seren Renamed"
     stored = creator.store.load(cid)
     assert stored.name == "Seren Renamed" and int(stored.age) == 30
-    assert stored.selections == {"race": "human"}
+    assert stored.selections == {**REQUIRED_SELECTIONS, "race": "human"}
     assert stored.id == cid
     assert stored.created_at == created_at
     assert stored.updated_at > "2020-01-01"          # touched
@@ -659,17 +777,19 @@ def test_update_round_trips_and_preserves_immutables(creator, audit):
 
 
 def test_update_payload_replaces_field_sets(creator):
-    cid = _created(creator, selections={"race": "elf"})
-    res = creator.update_character(cid, {"name": "Seren", "age": 27})
+    # a NON-required selection omitted from the payload is removed; the
+    # required set persists (it cannot be omitted — the gate re-runs, 5.5c)
+    cid = _created(creator, selections={"chest_size": "large"})
+    res = creator.update_character(cid, edit_payload())
     assert res["ok"] is True
-    assert creator.store.load(cid).selections == {}  # omitted -> removed
+    assert creator.store.load(cid).selections == REQUIRED_SELECTIONS
 
 
 def test_update_render_change_marks_catalog_and_cache_stale(creator):
     cid = _created(creator, selections={"race": "elf"})
     _forge_manifests(creator.store, cid)
     res = creator.update_character(
-        cid, {"name": "Seren", "age": 27, "selections": {"race": "human"}})
+        cid, edit_payload(selections={"race": "human"}))
     assert res["ok"] is True
     assert res["render_changed"] is True
     assert res["stale_marked"] == {"catalog": True, "cache": True}
@@ -682,10 +802,9 @@ def test_update_non_visual_edit_does_not_mark_stale(creator):
     _forge_manifests(creator.store, cid)
     # a rename + personality notes edit renders identically (name and
     # render:false groups never enter the prompt)
-    res = creator.update_character(cid, {
-        "name": "A Whole New Name", "age": 27,
-        "free_text": {"personality_notes": "Now quite chatty."},
-    })
+    res = creator.update_character(cid, edit_payload(
+        name="A Whole New Name",
+        free_text={"personality_notes": "Now quite chatty."}))
     assert res["ok"] is True
     assert res["render_changed"] is False
     assert res["stale_marked"] == {"catalog": False, "cache": False}
@@ -696,7 +815,7 @@ def test_update_non_visual_edit_does_not_mark_stale(creator):
 def test_update_age_change_is_render_relevant(creator):
     cid = _created(creator, age=25)
     _forge_manifests(creator.store, cid)
-    res = creator.update_character(cid, {"name": "Seren", "age": 60})
+    res = creator.update_character(cid, edit_payload(age=60))
     assert res["ok"] is True and res["render_changed"] is True
     assert creator.store.load_catalog(cid).stale is True
 
@@ -704,17 +823,14 @@ def test_update_age_change_is_render_relevant(creator):
 def test_update_appearance_notes_are_render_relevant(creator):
     cid = _created(creator)
     _forge_manifests(creator.store, cid)
-    res = creator.update_character(cid, {
-        "name": "Seren", "age": 27,
-        "free_text": {"appearance_notes": "a crescent scar over one brow"},
-    })
+    res = creator.update_character(cid, edit_payload(
+        free_text={"appearance_notes": "a crescent scar over one brow"}))
     assert res["ok"] is True and res["render_changed"] is True
 
 
 def test_update_without_manifests_reports_unmarked(creator):
     cid = _created(creator)
-    res = creator.update_character(
-        cid, {"name": "Seren", "age": 27, "selections": {"race": "elf"}})
+    res = creator.update_character(cid, edit_payload(selections={"race": "elf"}))
     assert res["ok"] is True and res["render_changed"] is True
     assert res["stale_marked"] == {"catalog": False, "cache": False}
 
@@ -722,8 +838,7 @@ def test_update_without_manifests_reports_unmarked(creator):
 def test_update_empty_manifest_not_marked(creator):
     cid = _created(creator)
     _forge_manifests(creator.store, cid, entries=False)
-    res = creator.update_character(
-        cid, {"name": "Seren", "age": 27, "selections": {"race": "elf"}})
+    res = creator.update_character(cid, edit_payload(selections={"race": "elf"}))
     assert res["ok"] is True
     assert res["stale_marked"] == {"catalog": False, "cache": False}
 
@@ -732,8 +847,7 @@ def test_update_corrupt_manifest_is_nonfatal(creator):
     cid = _created(creator)
     _forge_manifests(creator.store, cid)
     creator.store.catalog_path(cid).write_text("{broken", encoding="utf-8")
-    res = creator.update_character(
-        cid, {"name": "Seren", "age": 27, "selections": {"race": "elf"}})
+    res = creator.update_character(cid, edit_payload(selections={"race": "elf"}))
     assert res["ok"] is True                       # the edit itself saved
     assert res["stale_marked"]["catalog"] is False  # unmarkable, reported
     assert res["stale_marked"]["cache"] is True     # the other channel marked
@@ -750,8 +864,7 @@ def test_update_already_stale_counts_without_rewrite(creator):
         character_id=cid, stale=True,
         entries=[CatalogEntry(frame_id="f", path="catalog/f.png")],
         updated_at="2025-12-31T00:00:00+00:00"))
-    res = creator.update_character(
-        cid, {"name": "Seren", "age": 27, "selections": {"race": "elf"}})
+    res = creator.update_character(cid, edit_payload(selections={"race": "elf"}))
     assert res["ok"] is True and res["stale_marked"]["catalog"] is True
     # no gratuitous rewrite: the optimistic token is untouched
     assert (creator.store.load_catalog(cid).updated_at
@@ -800,8 +913,7 @@ def test_update_structured_load_errors(creator):
 
 def test_update_mode_key_is_ignored(creator):
     cid = _created(creator)
-    res = creator.update_character(
-        cid, {"mode": "banana", "name": "Seren", "age": 27})
+    res = creator.update_character(cid, edit_payload(mode="banana"))
     assert res["ok"] is True
 
 
@@ -813,8 +925,7 @@ def test_update_never_invokes_generation(creator):
     assert not hasattr(creator, "_engine")
     cid = _created(creator, selections={"race": "elf"})
     _forge_manifests(creator.store, cid)
-    res = creator.update_character(
-        cid, {"name": "Seren", "age": 27, "selections": {"race": "human"}})
+    res = creator.update_character(cid, edit_payload(selections={"race": "human"}))
     assert res["ok"] is True and res["render_changed"] is True
 
 
@@ -832,16 +943,16 @@ def test_update_preserves_unknown_group_values(tmp_path, audit):
         sliders={"height": 170, "reach": 88.0})
     creator.store.save(record)
 
-    # edit only the name; the unknown groups (faction/orders/reach) survive
-    res = creator.update_character(record.id, {
-        "name": "Keeper Renamed", "age": 30,
-        "selections": {"race": "elf"},
-        "tags": {"traits": ["curious"]},
-        "sliders": {"height": 170}})
+    # edit only the name; the unknown groups (faction/orders/reach) survive.
+    # The edit must supply the required set (the gate re-runs, 5.5c).
+    res = creator.update_character(record.id, edit_payload(
+        name="Keeper Renamed", age=30, selections={"race": "elf"},
+        tags={"traits": ["curious"]}, sliders={"height": 170}))
     assert res["ok"] is True
     stored = creator.store.load(record.id)
     assert stored.name == "Keeper Renamed"
-    assert stored.selections == {"race": "elf", "faction": "shadowclad"}
+    assert stored.selections == {**REQUIRED_SELECTIONS, "race": "elf",
+                                 "faction": "shadowclad"}
     assert stored.tags == {"traits": ["curious"], "orders": ["nightwatch"]}
     assert stored.sliders == {"height": 170, "reach": 88.0}
 
@@ -858,7 +969,9 @@ def test_update_unknown_group_not_re_added_if_payload_resets_it(tmp_path,
     record = CharacterRecord.create(name="Two", age=25,
                                     selections={"faction": "a"})
     creator.store.save(record)
-    res = creator.update_character(record.id, {"name": "Two", "age": 25})
+    res = creator.update_character(record.id, edit_payload(name="Two", age=25))
     assert res["ok"] is True
-    # faction is unknown to the catalog -> carried forward
-    assert creator.store.load(record.id).selections == {"faction": "a"}
+    # faction is unknown to the catalog -> carried forward alongside the
+    # required set the edit supplied
+    assert creator.store.load(record.id).selections == {
+        **REQUIRED_SELECTIONS, "faction": "a"}

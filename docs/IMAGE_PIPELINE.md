@@ -1046,11 +1046,79 @@ end-to-end character):
 
 Result feeds the BUILD_PLAN hardware-validation flag for 3g.
 
-## 20. KNOWN LIMITS (restating §16 for the image side)
+## 20. STAGE 5.5a — LONG-RUNNING-JOB CONTRACT (§3)
+
+Every heavy image op is slow ([HARDWARE]: train 31.5 min, bootstrap ~15 min,
+catalog 287 s). Stage 3 shipped them as **synchronous** bridges, so
+`image_generate_catalog` — already wired into `library.js` — was a live
+five-minute silent UI hang. `app/jobs/` backgrounds them without touching the
+synchronous service methods (922+ tests + every harness call them):
+
+- **`JobRunner`** — one daemon worker draining a bounded `queue.Queue`. One
+  heavy job at a time = the structural single GPU slot (§3). `submit(kind, fn,
+  target_id, total) → job_id` returns immediately; `status(job_id)` is a
+  non-blocking read the UI polls at ~1 Hz (**never** `window.evaluate_js` push —
+  it can deadlock the bridge thread and is fragile across view switches). Each
+  record persists to `data/jobs/<job_id>.json` on every state change.
+- **Cancellation** rides a `CancelToken` published on a thread-local
+  (`current_token()`). `CancellableEngine` wraps the engine and, only when a job
+  is active, checks the token before each `generate*` (raising `JobCancelled` —
+  which subclasses `Exception` *directly*, so no service loop's `except` tuple
+  catches it; it unwinds through the loops' `finally: unload()`, freeing VRAM)
+  and ticks per-frame progress. **When no job is active it is a pure
+  pass-through** — the synchronous path is byte-identical. Train cancels via
+  `Popen.terminate()` (`_KohyaSubprocessTrainer.train` is now `Popen`+
+  `communicate`, kill+reap on timeout); a terminated train raises `TrainFailed`
+  and returns before `os.replace`, so the **prior LoRA is preserved** (the 3d
+  invariant). `matte_catalog` / single-frame `generate_background` are pollable +
+  reap-safe but pre-flight-cancellable only.
+- **Reap sweep** `JobRunner.reconcile()` (wired into `main.run()`) mirrors the
+  Stage-4/5 vouching model: own dir, `.json` only, corrupt→skip (never delete);
+  a fresh process owns no jobs, so any persisted non-terminal record is a
+  hard-kill orphan → marked `interrupted`; terminal records past
+  `jobs.retain_seconds` are pruned. This closes the 3g item-10 orphan window.
+- **Bridges:** `job_submit(kind, target_id, options)` / `job_status` /
+  `job_cancel` / `job_list`, dispatching the six kinds to the unchanged
+  `bootstrap_generate` / `train_lora` / `generate_catalog` /
+  `generate_on_demand` / `matte_catalog` / `generate_background`. The front-end
+  is wired to these in 5.5c–d.
+
+
+## 21. STAGE 5.5b — PROMPT BUDGET (77-token CLIP window)
+
+- **LoRA trigger.** The trigger is minted once at train time (`_lora_trigger`,
+  now `sha1(id)[:6]` — 6 hex chars, ~4 CLIP tokens, down from the 16-char
+  `cfid`+12hex = 11 tokens) and persisted in `LoraManifest.trigger`. Generation
+  reads it from the manifest (`_generation_trigger`), **never re-derives** —
+  re-deriving silently de-triggers a LoRA whose stored trigger differs (weights
+  load, the conditioned token is absent, identity weakens, no error). Fallback
+  to derivation only for an absent / empty / unreadable manifest, so a
+  pre-change 16-char LoRA still fires.
+- **Chunked encoding** (`engine.encode_chunked`, all three backends). SDXL's
+  CLIP caps at 77 tokens and diffusers truncates a longer prompt silently — a
+  fully-detailed record assembles to 106–137 tokens (dropping outfit / style /
+  free-text / pose). The fix splits the assembled positive on commas into
+  ≤75-content-token windows, `encode_prompt`s each, and concatenates the embeds
+  along the sequence axis (pooled from window 0; the negative is padded to the
+  same length — the diffusers CFG equal-length requirement — by encoding both
+  chunk-lists padded to a common `k`). No new dependency (`compel` rejected, 3f
+  precedent). A short prompt → one window, identical to the old path.
+- **Token accounting.** `clip_token_counter` loads the model's own
+  `CLIPTokenizer` from `<pipeline_config_dir>/tokenizer` (lazy, offline);
+  `token_report` gives total / per-piece / 77-boundary. Surfaced through
+  `image_prompt_preview` under `tokens` (structured `available: false` when the
+  tokenizer is not on disk — never a vendored second BPE). 5.5c wires it into
+  the creator's live prompt panel.
+
+
+## 22. KNOWN LIMITS (restating §16 for the image side)
 
 - Categorical anatomy renders reliably; fine dimensional precision does not
   (§12) — the pipeline never promises it.
 - IP-Adapter identity (3b) weakens at the heavily non-human end; LoRA
   promotion (3d) is the mitigation (§6).
-- Prompt-token budget: CLIP ~75 tokens per encoder pass; overly long
-  appearance notes truncate from the tail.
+- Prompt-token budget: CLIP encodes ~75 content tokens per 77-slot window.
+  **Chunked encoding (§21) removes the single-window truncation** — a long
+  prompt is split into windows and concatenated, so nothing is dropped; a lone
+  comma-free fragment longer than a window is still truncated (nothing shorter
+  is possible without splitting a word).

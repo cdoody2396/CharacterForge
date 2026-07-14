@@ -25,6 +25,7 @@ from app.imagegen import (
     PromptBlocked,
     ReferenceUnreadable,
     SAMPLERS,
+    build_image_service,
 )
 from app.imagegen.engine import APP_ROOT, MAX_SEED
 from app.model import CharacterRecord, load_option_catalog
@@ -714,7 +715,11 @@ def test_build_services_wires_library_over_the_shared_store(tmp_path,
     assert isinstance(builders, BuilderService)
     # shared store: a character created via the creator is visible to library
     created = creator.create_character(
-        {"mode": "quick", "name": "Wired", "age": 22})
+        {"mode": "quick", "name": "Wired", "age": 22,
+         "selections": {"race": "human", "gender_presentation": "feminine",
+                        "skin_tone": "fair", "hair_color": "black",
+                        "hair_style": "short", "eye_color": "brown",
+                        "body_type": "average"}})
     assert created["ok"] is True
     listed = library.list_characters()
     assert any(r["id"] == created["id"] for r in listed["characters"])
@@ -2061,7 +2066,8 @@ def test_train_lora_happy_path(creator, settings, audit, fake_engine, trainer_di
     res = service.train_lora(record.id)
     assert res["ok"] is True
     assert res["lora_path"] == "lora/identity.safetensors"
-    assert res["trigger"].startswith("cfid") and res["dataset_size"] == 3
+    assert res["trigger"] == ImageService._lora_trigger(record)
+    assert len(res["trigger"]) == 6 and res["dataset_size"] == 3
     assert res["steps"] == 1600 and res["network_dim"] == 16
     assert res["lora_bytes"] > 0
 
@@ -2207,7 +2213,7 @@ def test_lora_status_and_clear(creator, settings, audit, fake_engine, trainer_di
     status = service.lora_status(record.id)
     assert status["has_lora"] is True
     assert status["lora_path"] == "lora/identity.safetensors"
-    assert status["trigger"].startswith("cfid")
+    assert status["trigger"] == ImageService._lora_trigger(record)
     assert status["provenance"]["dataset_size"] == 2
 
     cleared = service.clear_lora(record.id)
@@ -2287,15 +2293,52 @@ def test_train_lora_manifest_save_failure_is_structured(creator, settings, audit
     assert creator.store.load(record.id).identity.has_lora is False
 
 
-def test_lora_trigger_is_alphanumeric_for_a_weird_id(creator):
-    # Review L1: the trigger hashes the id, so it is provably [a-z0-9] even for
+def test_lora_trigger_is_short_hex_for_a_weird_id(creator):
+    # Review L1: the trigger hashes the id, so it is provably [0-9a-f] even for
     # a hand-edited (path-safe but NOT content-gated) id containing "loli".
+    # 5.5b: shortened to 6 hex chars (~4 CLIP tokens) from the prior 16-char
+    # "cfid"+12hex (11 tokens) — every 3d property preserved.
     import app.imagegen.service as svc_mod
     rec = make_record()
     object.__setattr__(rec, "id", "loli 5678 xx")  # bypass the id invariant
     trig = svc_mod.ImageService._lora_trigger(rec)
-    assert trig.startswith("cfid") and trig[4:].isalnum()
-    assert "loli" not in trig and " " not in trig
+    assert len(trig) == 6
+    assert all(c in "0123456789abcdef" for c in trig)  # provably [0-9a-f]
+    for coded in ("loli", "shota", "cp", " "):
+        assert coded not in trig
+
+
+def test_generation_reads_trigger_from_manifest_not_derivation(creator, settings,
+                                                               audit, fake_engine,
+                                                               trainer_dir):
+    # 5.5b defect fix: a LoRA trained before the trigger derivation changed
+    # keeps its ORIGINAL trigger (persisted in its manifest). Generation must
+    # read that, not re-derive — re-deriving silently de-triggers the LoRA.
+    from app.model import LoraManifest
+    service = train_svc(creator, settings, audit, fake_engine, FakeTrainerFactory())
+    record = _with_vetted(creator, n=2)
+    assert service.train_lora(record.id)["ok"] is True
+    # Simulate a LoRA trained under the OLD 16-char derivation: overwrite the
+    # persisted trigger with the legacy value.
+    legacy = "cfidafa4efa8344b"
+    manifest = creator.store.load_lora_manifest(record.id)
+    creator.store.save_lora_manifest(LoraManifest(
+        character_id=record.id, trigger=legacy, lora_file=manifest.lora_file))
+    # The generation path resolves the LEGACY trigger, not the new 6-hex one.
+    resolved = service._generation_trigger(creator.store.load(record.id))
+    assert resolved == legacy
+    assert resolved != service._lora_trigger(record)  # not re-derived
+
+
+def test_generation_trigger_falls_back_when_manifest_absent(creator, settings,
+                                                            audit, fake_engine):
+    # No manifest on disk (never trained, or a pre-trigger manifest) -> the
+    # generation trigger degrades to the current derivation rather than failing.
+    service = build_image_service(
+        creator.store, settings, audit, lambda: creator.catalog)
+    record = make_record()
+    creator.store.save(record)
+    assert service._generation_trigger(record) == service._lora_trigger(record)
 
 
 def test_train_lora_footprint_includes_manifest(creator, settings, audit,
@@ -2444,7 +2487,8 @@ def test_generate_catalog_happy_path(creator, settings, audit, fake_engine,
     # the catalog backend was LoRA-steered with the cell prompts (trigger + state)
     backend = fake_engine.factory.backends[-1]
     assert backend.catalog is True
-    assert any("cfid" in r.positive for r in backend.requests)
+    trigger = ImageService._lora_trigger(record)  # no manifest -> derived fallback
+    assert any(trigger in r.positive for r in backend.requests)
 
     # VRAM released; the cull toolkit built AFTER the image unload
     assert settings.get("models.active") is None
@@ -2873,8 +2917,9 @@ def test_on_demand_generates_culls_mattes_and_caches(
     assert entry.on_demand is True and entry.last_used
     assert entry.state == STATE and entry.bytes > 0
     # the LoRA-steered cell prompt = trigger + the state fragments
+    trigger = ImageService._lora_trigger(record)  # no manifest -> derived fallback
     reqs = [r for b in fake_engine.factory.backends for r in b.requests]
-    assert any("cfid" in r.positive and "gentle smile" in r.positive
+    assert any(trigger in r.positive and "gentle smile" in r.positive
                and "sitting" in r.positive for r in reqs)
     # VRAM: slot free; the cull toolkit built AFTER the image unload; the
     # fresh frame was matted WITHOUT a redundant classify (same-run pixels)
@@ -3314,15 +3359,201 @@ def test_on_demand_blocked_cell_prompt(creator, settings, audit, fake_engine,
                for e in audit_events(audit))
 
 
-def test_on_demand_zero_record_mutation(creator, settings, audit, fake_engine,
-                                        cull_models, matting_model):
+def test_on_demand_mutates_only_footprint_not_the_record(
+        creator, settings, audit, fake_engine, cull_models, matting_model):
+    # 3g promised zero record mutation; 5.5e deliberately relaxes that to ONE
+    # field — the on-demand path grows the cache, so it caches the new cache
+    # footprint into the record (the library reads it instead of walking the
+    # tree). Nothing ELSE mutates, and the hit path (second call) writes only
+    # cache bookkeeping, never the record.
     cull_factory = FakeToolkitFactory(outcomes=[{}] * 4)
     service = cache_service(creator, settings, audit, fake_engine, cull_factory)
     record = _catalog_ready(creator)
-    before = creator.store.record_path(record.id).read_bytes()
+    before = json.loads(
+        creator.store.record_path(record.id).read_text(encoding="utf-8"))
     service.generate_on_demand(record.id, dict(STATE))
     service.generate_on_demand(record.id, dict(STATE))  # and the hit path
-    assert creator.store.record_path(record.id).read_bytes() == before
+    after = json.loads(
+        creator.store.record_path(record.id).read_text(encoding="utf-8"))
+    assert after["identity"]["footprint"]["cache_bytes"] > 0
+    # everything but the footprint is byte-identical (no touch(), no drift)
+    before["identity"]["footprint"] = after["identity"]["footprint"] = None
+    assert before == after
+
+
+# -- 5.5d/5.5e: avatar candidates, frame thumbnails, footprint caching ---------
+
+
+def test_generate_base_candidates_renders_n_and_sets_nothing(service, creator):
+    record = saved_record(creator)
+    res = service.generate_base_candidates(record.id, 3)
+    assert res["ok"] is True
+    assert res["count"] == 3 and res["requested"] == 3
+    assert len(res["candidates"]) == 3
+    # every candidate is a real reference-dir frame with its own seed
+    seeds = {c["seed"] for c in res["candidates"]}
+    for c in res["candidates"]:
+        frame = Path(c["path"])
+        assert frame.is_file()
+        assert frame.parent == creator.store.char_dir(record.id) / "reference"
+    assert len(seeds) >= 1  # random seeds resolved per frame
+    # OFFERED, not mandatory: the wizard step sets NO reference — the user picks
+    reloaded = creator.store.load(record.id)
+    assert reloaded.identity.reference_image_path is None
+    # §3 slot freed after the batch
+    assert service.engine_status()["loaded"] is False
+
+
+@pytest.mark.parametrize("count,expected", [
+    (None, 4), (0, 1), (-3, 1), (99, 8), ("nope", 4), (float("inf"), 4), (2, 2),
+])
+def test_generate_base_candidates_count_is_clamped(service, creator, count,
+                                                   expected):
+    record = saved_record(creator)
+    res = service.generate_base_candidates(record.id, count)
+    assert res["ok"] is True and res["count"] == expected
+
+
+def test_generate_base_candidates_blocked_record_refuses(service, creator):
+    record = saved_record(
+        creator,
+        free_text={"appearance_notes": "Always around the kids at the temple."})
+    res = service.generate_base_candidates(record.id, 2)
+    assert res["ok"] is False and res["kind"] == "blocked"
+    assert not (creator.store.char_dir(record.id) / "reference").exists()
+
+
+def test_generate_base_candidates_unknown_character(service):
+    assert service.generate_base_candidates("ghost", 2)["kind"] == "not_found"
+    assert service.generate_base_candidates("", 2)["kind"] == "invalid"
+
+
+def _write_real_png(path, size=(64, 96), color=(30, 120, 200)):
+    from PIL import Image
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color).save(path, "PNG")
+
+
+def test_frame_thumbnail_data_uri_for_owned_frame(service, creator):
+    record = saved_record(creator)
+    frame = creator.store.char_dir(record.id) / "reference" / "base-1.png"
+    _write_real_png(frame, size=(800, 1200))
+    # absolute path (what a generate_* result hands the UI)
+    res = service.frame_thumbnail(record.id, str(frame))
+    assert res["ok"] is True
+    assert res["thumbnail"].startswith("data:image/jpeg;base64,")
+    import base64
+    import io as io_mod
+
+    from PIL import Image
+    raw = base64.b64decode(res["thumbnail"].split(",", 1)[1])
+    with Image.open(io_mod.BytesIO(raw)) as im:
+        assert max(im.size) <= 384  # default bound
+    # char-relative path resolves the same frame
+    assert service.frame_thumbnail(
+        record.id, "reference/base-1.png")["thumbnail"] is not None
+
+
+def test_frame_thumbnail_max_px_clamped_and_never_raises(service, creator):
+    record = saved_record(creator)
+    frame = creator.store.char_dir(record.id) / "reference" / "b.png"
+    _write_real_png(frame, size=(500, 500))
+    import base64
+    import io as io_mod
+
+    from PIL import Image
+    # explicit small bound honored
+    res = service.frame_thumbnail(record.id, str(frame), 128)
+    raw = base64.b64decode(res["thumbnail"].split(",", 1)[1])
+    with Image.open(io_mod.BytesIO(raw)) as im:
+        assert max(im.size) <= 128
+    # a hand-edited non-finite/garbage size degrades to the default, never raises
+    for bad in (float("inf"), float("nan"), "big", None, 0, -5):
+        assert service.frame_thumbnail(record.id, str(frame), bad)["ok"] is True
+
+
+def test_frame_thumbnail_missing_escaped_or_corrupt_is_none(service, creator,
+                                                            tmp_path):
+    record = saved_record(creator)
+    cdir = creator.store.char_dir(record.id)
+    # missing
+    assert service.frame_thumbnail(record.id, "reference/nope.png")[
+        "thumbnail"] is None
+    # escaped (absolute + traversal both refuse to a None thumbnail)
+    outside = tmp_path / "outside.png"
+    _write_real_png(outside)
+    assert service.frame_thumbnail(record.id, str(outside))["thumbnail"] is None
+    assert service.frame_thumbnail(record.id, "../../outside.png")[
+        "thumbnail"] is None
+    # corrupt (a non-image byte blob under the char dir)
+    bad = cdir / "reference" / "bad.png"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_bytes(b"not an image")
+    assert service.frame_thumbnail(record.id, str(bad))["thumbnail"] is None
+    # and NONE of these ever raised or leaked an error dict
+    assert service.frame_thumbnail(record.id, "reference/nope.png")["ok"] is True
+
+
+def test_frame_thumbnail_unknown_character(service):
+    assert service.frame_thumbnail("ghost", "reference/x.png")[
+        "kind"] == "not_found"
+
+
+def test_refresh_footprint_reloads_fresh_and_never_clobbers_a_concurrent_edit(
+        creator, service):
+    # A long job holds a record loaded at start; refresh_footprint must re-read
+    # the record so it overwrites ONLY the footprint, never a concurrent edit.
+    record = saved_record(creator)
+    cid = record.id
+    # simulate a concurrent creator edit landing AFTER the job's stale copy
+    edited = creator.store.load(cid)
+    edited.name = "Renamed Mid-Job"
+    creator.store.save(edited)
+    # grow an artifact dir, then refresh (as an artifact op would)
+    cdir = creator.store.char_dir(cid)
+    (cdir / "cache").mkdir(parents=True, exist_ok=True)
+    (cdir / "cache" / "c.png").write_bytes(b"\0" * 512)
+    service.refresh_footprint(cid)
+    after = creator.store.load(cid)
+    assert after.name == "Renamed Mid-Job"          # edit preserved
+    assert after.identity.footprint.cache_bytes == 512  # footprint updated
+
+
+def test_refresh_footprint_on_a_blocked_record_is_a_quiet_noop(service, creator):
+    record = saved_record(creator)
+    # hand-edit the stored record into a policy block
+    path = creator.store.record_path(record.id)
+    blob = json.loads(path.read_text(encoding="utf-8"))
+    blob["free_text"] = {"appearance_notes": "loli content"}
+    path.write_text(json.dumps(blob), encoding="utf-8")
+    service.refresh_footprint(record.id)  # must not raise
+
+
+def test_catalog_state_space_offers_ids_only(service, creator):
+    record = saved_record(creator)
+    res = service.catalog_state_space(record.id)
+    assert res["ok"] is True
+    for key in ("expressions", "poses", "outfits"):
+        assert isinstance(res[key], list) and res[key]  # bundled states exist
+        for item in res[key]:
+            assert set(item) == {"id", "label"}
+            assert isinstance(item["id"], str) and isinstance(item["label"], str)
+    assert service.catalog_state_space("ghost")["kind"] == "not_found"
+
+
+def test_generate_catalog_caches_footprint(creator, settings, audit, fake_engine,
+                                           cull_models):
+    _small_matrix(settings)
+    factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = bootstrap_service(creator, settings, audit, fake_engine, factory)
+    record = _catalog_ready(creator)
+    assert service.generate_catalog(record.id)["ok"]
+    reloaded = creator.store.load(record.id)
+    assert reloaded.identity.footprint.catalog_bytes > 0
+    # and clearing it zeroes the cached catalog bytes
+    service.clear_catalog(record.id)
+    assert creator.store.load(record.id).identity.footprint.catalog_bytes == 0
 
 
 # -- Stage 3g review-pass regressions ------------------------------------------

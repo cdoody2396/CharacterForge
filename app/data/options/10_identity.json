@@ -8,6 +8,7 @@
       "order": 10,
       "section": "Identity",
       "quick": true,
+      "required": true,
       "options": [
         { "id": "human", "label": "Human", "prompt": "human" },
         { "id": "elf", "label": "Elf", "prompt": "elf, pointed ears", "tags": ["fantasy"] },
@@ -52,6 +53,7 @@
       "order": 12,
       "section": "Identity",
       "quick": true,
+      "required": true,
       "render": false,
       "_render_note": "The image-prompt subject anchor (solo, 1girl/1boy/1other) is derived from this field in code (prompt.py); emitting the option fragment too would double the token.",
       "options": [

@@ -20,6 +20,7 @@ depends on the UI behaving.
 
 from __future__ import annotations
 
+import base64
 import math
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,14 +35,23 @@ from ..model import (
     IdentityAnchor,
     MAX_AGE,
     MIN_AGE,
+    MissingRequiredSelection,
     OptionCatalog,
     OptionGroup,
+    derive_widget,
     load_option_catalog,
+    resolve_within,
 )
+from ..model.options import BUNDLED_OPTIONS_DIR
 
 MODES = ("quick", "detailed")
 NAME_MAX_LEN = 120
 TEXT_MAX_LEN = 20_000
+
+# Option picker thumbnails (5.5c): bounded, CSP-displayable image types only.
+_IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+               ".gif": "image/gif", ".webp": "image/webp"}
+_MAX_THUMB_BYTES = 512 * 1024
 
 # The fixed free-text fields the creator offers (§10: structured tags +
 # filtered free text). The *set* of fields is code-defined; their content is
@@ -86,9 +96,27 @@ class _Invalid(ValueError):
         super().__init__(message)
 
 
-def _group_payload(group: OptionGroup) -> dict:
+def _option_payload(opt, image_resolver) -> dict:
+    """One option as the UI consumes it: id + label, plus a swatch ``color``
+    and/or a picker-tile ``image`` (a containment-resolved data URI) when the
+    option file carried them (5.5c). Generation-side data (prompt/aliases)
+    stays backend-side."""
+    out: dict[str, Any] = {"id": opt.id, "label": opt.label}
+    if opt.color:
+        out["color"] = opt.color
+    if opt.image:
+        src = image_resolver(opt.image)
+        if src:
+            out["image"] = src
+    return out
+
+
+def _group_payload(group: OptionGroup, image_resolver) -> dict:
     """One group as the UI consumes it. Generation-side data (prompt
-    fragments, aliases) stays backend-side on purpose."""
+    fragments, aliases) stays backend-side on purpose. ``widget`` is the
+    resolved creator widget (derivation applied, 5.5c) — the front-end renders
+    it verbatim; ``required`` and ``prompt_ranges`` ride along for the required
+    marker and the live slider band label."""
     return {
         "id": group.id,
         "label": group.label,
@@ -99,16 +127,16 @@ def _group_payload(group: OptionGroup) -> dict:
         "order": group.order,
         "section": group.section,
         "quick": group.quick,
+        "required": group.required,
+        "widget": derive_widget(group),
         "multi": group.multi,
-        "options": [
-            {"id": o.id, "label": o.label, **({"color": o.color} if o.color else {})}
-            for o in group.options
-        ],
+        "options": [_option_payload(o, image_resolver) for o in group.options],
         "min": group.min,
         "max": group.max,
         "step": group.step,
         "default": group.default,
         "unit": group.unit,
+        "prompt_ranges": [dict(r) for r in group.prompt_ranges],
     }
 
 
@@ -149,15 +177,49 @@ class CreatorService:
 
     def describe(self) -> dict:
         """The option catalog + fixed free-text fields, shaped for the UI."""
+        resolve = self._resolve_option_image
         return {
-            "groups": [_group_payload(g) for g in self._catalog.groups()],
+            "groups": [_group_payload(g, resolve) for g in self._catalog.groups()],
             "free_text_fields": [dict(f) for f in FREE_TEXT_FIELDS],
+            "required_groups": list(self._catalog.required_group_ids()),
             "min_age": MIN_AGE,
             "max_age": MAX_AGE,
             "name_max_len": NAME_MAX_LEN,
             "text_max_len": TEXT_MAX_LEN,
             "errors": [{"file": f, "error": e} for f, e in self._catalog.errors],
         }
+
+    def _resolve_option_image(self, rel: str) -> str | None:
+        """Resolve an option's ``image`` (a path relative to an option
+        directory) to an inline ``data:`` URI, or None. Every option directory
+        (bundled + user drop-ins) is tried through ``resolve_within`` — the
+        same containment rule the stores use — so a hand-authored ``..`` /
+        absolute / symlink-escape path can never read outside the option tree.
+        Bounded in size (a thumbnail, not a full render) and restricted to
+        image types the CSP's ``img-src 'self' data:`` will display; anything
+        larger, missing, unreadable, or non-image reads as no thumbnail rather
+        than raising — a bad path must never break the whole catalog."""
+        for base in (*self._option_dirs, BUNDLED_OPTIONS_DIR):
+            resolved = resolve_within(base, rel)
+            if resolved is None:
+                continue
+            suffix = resolved.suffix.lower()
+            mime = _IMAGE_MIME.get(suffix)
+            if mime is None:
+                return None
+            try:
+                if resolved.stat().st_size > _MAX_THUMB_BYTES:
+                    return None
+                raw = resolved.read_bytes()
+            except OSError:
+                return None
+            return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+        return None
+
+    def _required_group_ids(self) -> tuple[str, ...]:
+        """The catalog's required-selection set, passed to record construction
+        so a new/edited character is gated on the render-identity minimum."""
+        return self._catalog.required_group_ids()
 
     def reload(self) -> dict:
         """Re-scan the option directories (a freshly dropped-in data file
@@ -182,6 +244,10 @@ class CreatorService:
         except _Invalid as exc:
             return {"ok": False, "kind": "invalid", "field": exc.field,
                     "error": str(exc)}
+        except MissingRequiredSelection as exc:
+            return {"ok": False, "kind": "required",
+                    "field": f"selections.{exc.group_id}",
+                    "error": f"{exc.group_id} is required"}
         except ContentBlocked as exc:
             # Layer-4 trail for a Layer-1 block on the record path (the live
             # check_text path audits separately in the shell Api).
@@ -249,6 +315,10 @@ class CreatorService:
         except _Invalid as exc:
             return {"ok": False, "kind": "invalid", "field": exc.field,
                     "error": str(exc)}
+        except MissingRequiredSelection as exc:
+            return {"ok": False, "kind": "required",
+                    "field": f"selections.{exc.group_id}",
+                    "error": f"{exc.group_id} is required"}
         except ContentBlocked as exc:
             self._audit.log(
                 "filter_block",
@@ -389,6 +459,11 @@ class CreatorService:
             sliders=self._check_sliders(payload.get("sliders") or {}),
             free_text=self._check_free_text(payload.get("free_text") or {}),
             identity=identity,  # Stage-4 edit: the anchor survives the edit
+            # 5.5c render-identity minimum: a character cannot be constructed
+            # (created OR edited) without every required group. Catalog-driven,
+            # so a drop-in file that marks a new group required is enforced with
+            # no code change.
+            required_groups=self._required_group_ids(),
         )
 
     def _group_for(self, gid: str, channel: str) -> OptionGroup:

@@ -29,7 +29,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 
 from ..safety import Layer1Filter, get_filter
 from .age import Age
@@ -52,6 +52,25 @@ class ContentBlocked(ValueError):
 
 class InvalidId(ValueError):
     """A character id is not a safe single path segment."""
+
+
+class MissingRequiredSelection(ValueError):
+    """A record was constructed without a value for a group the catalog marks
+    ``required`` (5.5c — the render-identity minimum). Raised at the .create()
+    construction boundary (the age.py "construction is the gate" pattern),
+    driven by the catalog's required set rather than a hard-coded id list so
+    the generic record stays option-catalog-agnostic. Loading an already-saved
+    record (from_dict) does NOT re-run this — a legacy record missing a
+    required group loads and is surfaced as a soft ``validate_against`` lint,
+    the same lenient-on-load stance §15 takes for unknown options; only NEW
+    construction is gated."""
+
+    def __init__(self, group_id: str):
+        self.group_id = group_id
+        super().__init__(
+            f"missing required selection {group_id!r}; a character cannot be "
+            f"constructed without the render-identity minimum (§15/5.5c)"
+        )
 
 
 def ensure_safe_id(value: object) -> str:
@@ -333,8 +352,16 @@ class CharacterRecord:
         sliders: dict[str, float] | None = None,
         free_text: dict[str, str] | None = None,
         identity: IdentityAnchor | None = None,
+        required_groups: Iterable[str] = (),
     ) -> "CharacterRecord":
-        return cls(
+        """Build and gate a new record. ``required_groups`` (5.5c) is the
+        catalog's required-selection set (``OptionCatalog.required_group_ids``);
+        the creator write path passes it, so a NEW character cannot be
+        constructed without the render-identity minimum. It defaults to empty
+        so internal/raw construction and the from_dict load path stay ungated
+        — the gate is on deliberate creation, not on loading what already
+        exists (see :class:`MissingRequiredSelection`)."""
+        record = cls(
             name=name,
             age=Age.coerce(age),
             selections=dict(selections or {}),
@@ -343,6 +370,10 @@ class CharacterRecord:
             free_text=dict(free_text or {}),
             identity=identity or IdentityAnchor(),
         )
+        for gid in required_groups:
+            if not record.selections.get(str(gid)):
+                raise MissingRequiredSelection(str(gid))
+        return record
 
     def touch(self) -> None:
         self.updated_at = _now_iso()
@@ -389,8 +420,16 @@ class CharacterRecord:
         """Return a list of human-readable issues: selections/tags/sliders that
         reference unknown groups or options. Soft — the record is still the
         source of truth (options can be added later); this is a lint, not a
-        gate. The age and content gates are the hard ones and already ran."""
+        gate. The age and content gates are the hard ones and already ran.
+
+        Includes any ``required`` group the record has no value for (5.5c): a
+        NEW record is gated on these at .create(), but a legacy record loaded
+        from disk is not, so the gap surfaces here for the library/edit UI."""
         issues: list[str] = []
+        for gid in catalog.required_group_ids():
+            if not self.selections.get(gid):
+                issues.append(
+                    f"required {gid!r}: no value set (render-identity minimum)")
         for gid, val in self.selections.items():
             group = catalog.get(gid)
             if group is None:

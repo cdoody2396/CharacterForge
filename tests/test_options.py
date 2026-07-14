@@ -7,6 +7,7 @@ import pytest
 
 from app.model.options import (
     OptionFormatError,
+    derive_widget,
     load_option_catalog,
 )
 
@@ -59,6 +60,73 @@ def test_groups_sorted_by_order():
     orders = [g.order for g in groups]
     assert orders == sorted(orders)
     assert groups[0].id == "age"  # order 1
+
+
+# -- 5.5c §15 delta: required / widget / image --------------------------------
+
+
+def test_bundled_required_set_is_the_render_identity_minimum():
+    catalog = load_option_catalog(strict=True)
+    assert set(catalog.required_group_ids()) == {
+        "race", "gender_presentation", "skin_tone", "hair_color",
+        "hair_style", "eye_color", "body_type"}
+    # every required group is quick (the load-time invariant)
+    for gid in catalog.required_group_ids():
+        assert catalog.get(gid).quick is True
+
+
+def test_required_but_not_quick_is_a_load_error(tmp_path):
+    write_options(tmp_path / "bad.json", [
+        {"id": "faction", "kind": "single", "required": True,
+         "options": [{"id": "a", "label": "A"}]}])  # required but not quick
+    with pytest.raises(OptionFormatError, match="required but not quick"):
+        load_option_catalog([tmp_path], include_bundled=False, strict=True)
+
+
+def test_required_merge_flip_without_quick_is_a_load_error(tmp_path):
+    # flipping a bundled required group's quick off (without clearing required)
+    # is a load-time error — the two must stay consistent
+    write_options(tmp_path / "z.json", [{"id": "race", "quick": False}])
+    with pytest.raises(OptionFormatError, match="required but not quick"):
+        load_option_catalog([tmp_path], strict=True)
+
+
+def test_unknown_widget_is_a_load_error(tmp_path):
+    write_options(tmp_path / "bad.json", [
+        {"id": "g", "kind": "single", "widget": "carousel",
+         "options": [{"id": "a", "label": "A"}]}])
+    with pytest.raises(OptionFormatError, match="invalid widget"):
+        load_option_catalog([tmp_path], include_bundled=False, strict=True)
+
+
+def test_widget_derivation_matches_the_spec_table():
+    catalog = load_option_catalog(strict=True)
+    # kind slider -> slider; colors -> swatch; single<=5 -> segmented;
+    # <=12 -> chips; otherwise -> picker (race has 13 options)
+    assert derive_widget(catalog.get("height")) == "slider"
+    assert derive_widget(catalog.get("skin_tone")) == "swatch"
+    assert derive_widget(catalog.get("gender_presentation")) == "segmented"
+    assert derive_widget(catalog.get("chest_size")) == "segmented"
+    assert derive_widget(catalog.get("outfit")) == "chips"
+    assert derive_widget(catalog.get("race")) == "picker"
+
+
+def test_explicit_widget_overrides_derivation(tmp_path):
+    write_options(tmp_path / "w.json", [
+        {"id": "race", "widget": "segmented"}])  # force a non-derived widget
+    catalog = load_option_catalog([tmp_path], strict=True)
+    assert catalog.get("race").widget == "segmented"
+    assert derive_widget(catalog.get("race")) == "segmented"
+
+
+def test_option_image_parses_and_round_trips(tmp_path):
+    write_options(tmp_path / "img.json", [
+        {"id": "g", "kind": "single",
+         "options": [{"id": "a", "label": "A", "image": "thumbs/a.png"}]}])
+    catalog = load_option_catalog([tmp_path], include_bundled=False, strict=True)
+    opt = catalog.get("g").get_option("a")
+    assert opt.image == "thumbs/a.png"
+    assert opt.to_dict()["image"] == "thumbs/a.png"
 
 
 # -- drop-in extension --------------------------------------------------------

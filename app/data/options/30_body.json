@@ -8,6 +8,7 @@
       "order": 30,
       "section": "Body",
       "quick": true,
+      "required": true,
       "options": [
         { "id": "petite", "label": "Petite", "prompt": "petite build" },
         { "id": "slim", "label": "Slim", "prompt": "slim build" },
@@ -69,7 +70,6 @@
       "max": 100,
       "step": 1,
       "default": 40,
-      "unit": "%",
       "prompt_ranges": [
         { "max": 20, "prompt": "soft, minimal muscle definition" },
         { "min": 21, "max": 50, "prompt": "toned" },

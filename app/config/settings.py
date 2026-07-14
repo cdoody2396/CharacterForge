@@ -177,6 +177,17 @@ DEFAULTS: dict[str, Any] = {
         # Layer 4 (§11): local audit logging of generations/conversations.
         "logging_enabled": True,
     },
+    "jobs": {
+        # Stage-5.5a long-running-job contract. One heavy job runs at a time
+        # (the single GPU slot, §3); the queue bounds how many may wait behind
+        # it before a submit is refused (bootstrap/train/catalog are minutes
+        # each, so a deep backlog is meaningless).
+        "queue_size": 16,
+        # A hard kill leaves a job record the startup reconcile sweep marks
+        # "interrupted"; terminal records older than this are pruned. 7 days
+        # keeps recent history browsable without unbounded growth.
+        "retain_seconds": 604800,
+    },
 }
 
 

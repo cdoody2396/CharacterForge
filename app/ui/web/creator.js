@@ -1,12 +1,20 @@
-/* Stage-2 creator: quick + detailed create paths, rendered entirely from the
-   option catalog (creator_catalog), writing records via create_character.
-   The form is data-driven — groups, sections, anatomy regions, and the
-   quick-path membership all come from the option data files, so a drop-in
-   file surfaces here with no code change (§15).
+/* Stage-2 creator, rebuilt for 5.5c: quick + detailed create paths rendered
+   entirely from the option catalog (creator_catalog). The form is data-driven
+   — groups, sections, anatomy regions, quick-path membership, AND the widget
+   for every group all come from the option data files, so a drop-in file
+   surfaces here with no code change (§15). The old `<select>` is gone: the
+   backend derives one of five widgets (segmented / chips / swatch / picker /
+   slider) per group and the front-end renders it verbatim, so a large drop-in
+   option list becomes a searchable picker automatically.
 
-   All free text is checked live against Layer 1 (check_text) for feedback,
-   and re-gated in the backend on save — the live check is UX, not the
-   safety boundary. */
+   All free text is checked live against Layer 1 (check_text); the live check
+   surfaces only BLOCKS (not a per-keystroke "passes" line) and the record is
+   re-gated in the backend on save — the live check is UX, not the boundary.
+
+   The live prompt panel reads image_prompt_preview(id): the assembled positive,
+   per-fragment provenance, the CLIP token count, and the 77-token boundary. The
+   bridge loads a SAVED record, so the panel reflects the stored character —
+   refreshed on entering edit mode and after every successful save. */
 
 "use strict";
 
@@ -17,6 +25,7 @@ window.Creator = (function () {
   let mode = "quick";
   let loading = false;
   let editing = null;      // {id, name, snapshot} while editing (Stage 4)
+  let lastSavedId = null;  // most recent persisted id (drives the prompt panel)
 
   // Everything the user has entered, kept outside the DOM so switching
   // modes (or reloading options) re-renders without losing work.
@@ -46,6 +55,10 @@ window.Creator = (function () {
     };
   }
 
+  function requiredIds() {
+    return new Set(catalog && catalog.required_groups ? catalog.required_groups : []);
+  }
+
   // ------------------------------------------------------ catalog shaping
 
   function ageGroup() {
@@ -61,18 +74,42 @@ window.Creator = (function () {
 
   // ------------------------------------------------------- field controls
 
-  function fieldWrap(dataField, labelText, hint) {
+  function fieldWrap(dataField, labelText, hint, required) {
     const wrap = el("div", "field");
     wrap.dataset.field = dataField;
-    wrap.appendChild(el("div", "field-label", labelText));
+    const label = el("div", "field-label", labelText);
+    if (required) {
+      const star = el("span", "req-mark", " *");
+      star.title = "Required — part of the render-identity minimum";
+      label.appendChild(star);
+    }
+    wrap.appendChild(label);
     if (hint) wrap.appendChild(el("div", "field-hint", hint));
     return wrap;
   }
 
-  function optionButton(option, isOn) {
+  function swatchBg(option) {
+    return option.color || null;
+  }
+
+  // A chip/segment button for one option. `variant` tunes the look:
+  // "swatch" renders a colour tile / thumbnail, others a labelled pill.
+  function optionButton(option, isOn, variant) {
     const btn = el("button", "opt", option.label);
     btn.type = "button";
-    if (option.color) {
+    if (variant === "swatch" && (option.color || option.image)) {
+      btn.classList.add("swatch");
+      const tile = el("span", "swatch-tile");
+      if (option.image) {
+        const img = el("img");
+        img.src = option.image;
+        img.alt = "";
+        tile.appendChild(img);
+      } else {
+        tile.style.backgroundColor = option.color;
+      }
+      btn.prepend(tile);
+    } else if (option.color) {
       const dot = el("span", "dot");
       dot.style.backgroundColor = option.color;
       btn.prepend(dot);
@@ -81,51 +118,30 @@ window.Creator = (function () {
     return btn;
   }
 
-  function singleControl(group, label) {
-    const wrap = fieldWrap("selections." + group.id, label);
-    const hasColors = group.options.some((o) => o.color);
-    if (group.options.length > 8 && !hasColors) {
-      // long colorless lists read better as a dropdown
-      const select = el("select");
-      const none = el("option", null, "—");
-      none.value = "";
-      select.appendChild(none);
-      for (const o of group.options) {
-        const opt = el("option", null, o.label);
-        opt.value = o.id;
-        select.appendChild(opt);
-      }
-      select.value = state.selections[group.id] || "";
-      select.addEventListener("change", () => {
-        if (select.value) state.selections[group.id] = select.value;
-        else delete state.selections[group.id];
+  // Single-select pill/segment/swatch row: re-click clears.
+  function singleRow(group, wrap, variant, rowCls) {
+    const row = el("div", rowCls || "chips");
+    for (const o of group.options) {
+      const btn = optionButton(o, state.selections[group.id] === o.id, variant);
+      btn.addEventListener("click", () => {
+        const wasOn = state.selections[group.id] === o.id;
+        if (wasOn) delete state.selections[group.id];
+        else state.selections[group.id] = o.id;
+        for (const sib of row.children)
+          sib.classList.toggle("on", sib === btn && !wasOn);
+        clearFieldError(wrap);
       });
-      wrap.appendChild(select);
-    } else {
-      // pill row acting as a segmented single-select; re-click clears
-      const row = el("div", "chips");
-      for (const o of group.options) {
-        const btn = optionButton(o, state.selections[group.id] === o.id);
-        btn.addEventListener("click", () => {
-          const wasOn = state.selections[group.id] === o.id;
-          if (wasOn) delete state.selections[group.id];
-          else state.selections[group.id] = o.id;
-          for (const sib of row.children)
-            sib.classList.toggle("on", sib === btn && !wasOn);
-        });
-        row.appendChild(btn);
-      }
-      wrap.appendChild(row);
+      row.appendChild(btn);
     }
-    return wrap;
+    wrap.appendChild(row);
   }
 
-  function multiControl(group, label) {
-    const wrap = fieldWrap("tags." + group.id, label);
+  // Multi-select pill/swatch row.
+  function multiRow(group, wrap, variant) {
     const row = el("div", "chips");
     for (const o of group.options) {
       const current = state.tags[group.id] || [];
-      const btn = optionButton(o, current.includes(o.id));
+      const btn = optionButton(o, current.includes(o.id), variant);
       btn.addEventListener("click", () => {
         const list = state.tags[group.id] || (state.tags[group.id] = []);
         const at = list.indexOf(o.id);
@@ -141,11 +157,103 @@ window.Creator = (function () {
       row.appendChild(btn);
     }
     wrap.appendChild(row);
-    return wrap;
   }
 
-  function numericControl(group, label) {
-    const wrap = fieldWrap("sliders." + group.id, label);
+  // Searchable / filterable / tiled picker (holds ~200 options). Renders image
+  // thumbnails and colour swatches when present, labels otherwise. Only the
+  // filtered subset is rendered (capped) so a large catalog stays responsive.
+  const PICKER_RENDER_CAP = 120;
+
+  function pickerControl(group, wrap) {
+    const multi = group.multi;
+    const chosen = () => multi
+      ? (state.tags[group.id] || [])
+      : (state.selections[group.id] ? [state.selections[group.id]] : []);
+
+    const box = el("div", "picker");
+    const search = el("input", "picker-search");
+    search.type = "search";
+    search.placeholder = `Search ${group.label.toLowerCase()}… (${group.options.length})`;
+    const grid = el("div", "picker-grid");
+    const more = el("div", "picker-more");
+
+    function isOn(id) { return chosen().includes(id); }
+
+    function toggle(id) {
+      if (multi) {
+        const list = state.tags[group.id] || (state.tags[group.id] = []);
+        const at = list.indexOf(id);
+        if (at >= 0) { list.splice(at, 1); if (!list.length) delete state.tags[group.id]; }
+        else list.push(id);
+      } else {
+        if (state.selections[group.id] === id) delete state.selections[group.id];
+        else state.selections[group.id] = id;
+      }
+      clearFieldError(wrap);
+      paint();
+    }
+
+    function paint() {
+      const q = search.value.trim().toLowerCase();
+      const matches = group.options.filter((o) =>
+        !q || o.label.toLowerCase().includes(q) || o.id.toLowerCase().includes(q));
+      grid.textContent = "";
+      for (const o of matches.slice(0, PICKER_RENDER_CAP)) {
+        const tile = el("button", "picker-tile");
+        tile.type = "button";
+        if (isOn(o.id)) tile.classList.add("on");
+        if (o.image) {
+          const img = el("img"); img.src = o.image; img.alt = "";
+          tile.appendChild(img);
+        } else if (o.color) {
+          const sw = el("span", "picker-color");
+          sw.style.backgroundColor = o.color;
+          tile.appendChild(sw);
+        }
+        tile.appendChild(el("span", "picker-label", o.label));
+        tile.addEventListener("click", () => toggle(o.id));
+        grid.appendChild(tile);
+      }
+      const hidden = matches.length - Math.min(matches.length, PICKER_RENDER_CAP);
+      more.textContent = hidden > 0
+        ? `${hidden} more — refine your search`
+        : (matches.length ? "" : "No matches.");
+    }
+
+    search.addEventListener("input", paint);
+    box.appendChild(search);
+    box.appendChild(grid);
+    box.appendChild(more);
+    wrap.appendChild(box);
+    paint();
+  }
+
+  // Height/weight/muscle slider: metric value (+ imperial for cm/kg, display
+  // only) and the live prompt_ranges band label — the semantic the model is
+  // actually told. Storage stays metric.
+  function bandFor(group, value) {
+    for (const r of group.prompt_ranges || []) {
+      const lo = r.min, hi = r.max;
+      if ((lo === undefined || lo === null || value >= lo) &&
+          (hi === undefined || hi === null || value <= hi))
+        return r.prompt || "";
+    }
+    return "";
+  }
+
+  function imperial(group, value) {
+    if (group.unit === "cm") {
+      const totalIn = value / 2.54;
+      const ft = Math.floor(totalIn / 12);
+      const inch = Math.round(totalIn - ft * 12);
+      return `${ft}′${inch}″`;
+    }
+    if (group.unit === "kg") return `${Math.round(value * 2.2046)} lb`;
+    return "";
+  }
+
+  function numericControl(group, label, required) {
+    const wrap = fieldWrap("sliders." + group.id, label, null, required);
     const min = group.min ?? 0;
     const max = group.max ?? 100;
     if (!(group.id in state.sliders))
@@ -158,8 +266,13 @@ window.Creator = (function () {
     input.step = group.step ?? 1;
     input.value = state.sliders[group.id];
     const value = el("span", "slider-val");
+    const band = el("div", "slider-band");
     const show = () => {
-      value.textContent = input.value + (group.unit ? " " + group.unit : "");
+      const v = Number(input.value);
+      const imp = imperial(group, v);
+      const metric = group.unit ? `${input.value} ${group.unit}` : `${input.value}`;
+      value.textContent = imp ? `${metric} · ${imp}` : metric;
+      band.textContent = bandFor(group, v);
     };
     show();
     input.addEventListener("input", () => {
@@ -174,36 +287,42 @@ window.Creator = (function () {
     row.appendChild(input);
     row.appendChild(value);
     wrap.appendChild(row);
+    wrap.appendChild(band);
     return wrap;
   }
 
+  // Widget dispatch — the backend hands us the resolved widget per group
+  // (derivation already applied), so there is one place that maps widget->DOM.
   function control(group, labelOverride) {
     const label = labelOverride || group.label;
-    if (group.kind === "slider" || group.kind === "number")
-      return numericControl(group, label);
-    if (group.multi) return multiControl(group, label);
-    return singleControl(group, label);
+    const required = !!group.required;
+    if (group.widget === "slider") return numericControl(group, label, required);
+    const wrap = fieldWrap(
+      (group.multi ? "tags." : "selections.") + group.id, label, null, required);
+    if (group.widget === "picker") pickerControl(group, wrap);
+    else if (group.multi) multiRow(group, wrap, group.widget);
+    else singleRow(group, wrap, group.widget,
+                   group.widget === "segmented" ? "seg-row" : "chips");
+    return wrap;
   }
 
-  // Live Layer-1 feedback for a text field. Each field gets its own
-  // debounced checker so parallel typing doesn't cross wires; a sequence
-  // token drops responses that resolve after a newer check started.
-  function makeChecker(statusEl, context) {
+  function clearFieldError(wrap) { wrap.classList.remove("bad"); }
+
+  // Live Layer-1 feedback for a text field — shows ONLY on a block (5.5c: no
+  // per-keystroke "passes the filter" reassurance). A sequence token drops
+  // responses that resolve after a newer check started.
+  function makeChecker(statusEl) {
     let seq = 0;
-    return debounce(async (text) => {
+    return debounce(async (text, context) => {
       const token = ++seq;
       text = (text || "").trim();
-      if (!text) {
-        statusEl.className = "field-status";
-        statusEl.textContent = "";
-        return;
-      }
+      if (!text) { statusEl.className = "field-status"; statusEl.textContent = ""; return; }
       try {
         const res = await window.pywebview.api.check_text(text, context);
         if (token !== seq) return; // superseded while in flight
         if (res.allowed) {
-          statusEl.className = "field-status ok";
-          statusEl.textContent = "Passes the content filter.";
+          statusEl.className = "field-status";
+          statusEl.textContent = "";
         } else {
           statusEl.className = "field-status blocked";
           statusEl.textContent = "Blocked — " + res.category +
@@ -224,10 +343,10 @@ window.Creator = (function () {
     area.maxLength = catalog.text_max_len || 20000;
     area.value = state.free_text[fieldDef.key] || "";
     const status = el("div", "field-status");
-    const check = makeChecker(status, "freetext");
+    const check = makeChecker(status);
     area.addEventListener("input", () => {
       state.free_text[fieldDef.key] = area.value;
-      check(area.value);
+      check(area.value, "freetext");
     });
     wrap.appendChild(area);
     wrap.appendChild(status);
@@ -248,10 +367,10 @@ window.Creator = (function () {
     nameInput.placeholder = "Character name";
     nameInput.value = state.name;
     const nameStatus = el("div", "field-status");
-    const nameCheck = makeChecker(nameStatus, "name");
+    const nameCheck = makeChecker(nameStatus);
     nameInput.addEventListener("input", () => {
       state.name = nameInput.value;
-      nameCheck(nameInput.value);
+      nameCheck(nameInput.value, "name");
     });
     nameWrap.appendChild(nameInput);
     nameWrap.appendChild(nameStatus);
@@ -293,11 +412,11 @@ window.Creator = (function () {
 
   function render() {
     const root = $("creator-form");
-    // keep progressive-disclosure state: remember which anatomy regions are
+    // keep progressive-disclosure state: remember which sections/regions are
     // open so a mode switch / reload doesn't collapse the user's place
-    const openRegions = new Set(
-      [...root.querySelectorAll("details.region[open] > summary")]
-        .map((s) => s.textContent));
+    const openKeys = new Set(
+      [...root.querySelectorAll("details[open] > summary")]
+        .map((s) => s.dataset.key || s.textContent));
     root.textContent = "";
     renderAlerts();
     root.appendChild(identityCard());
@@ -306,14 +425,17 @@ window.Creator = (function () {
     const plain = groups.filter((g) => !g.region);
     const anatomy = groups.filter((g) => g.region);
 
-    // ordered section cards; a group's `section` places it, anatomy groups
-    // collapse under one section by body region (§12 progressive disclosure)
+    // ordered collapsible section cards; a group's `section` places it, anatomy
+    // groups collapse under one section by body region (§12 disclosure)
     const sections = new Map(); // title -> {order, fields, card}
     function sectionFields(title, order) {
       let s = sections.get(title);
       if (!s) {
-        const card = el("section", "card");
-        card.appendChild(el("h2", null, title));
+        const card = el("details", "card section");
+        card.open = openKeys.size === 0 || openKeys.has("sec:" + title);
+        const summary = el("summary", "section-summary", title);
+        summary.dataset.key = "sec:" + title;
+        card.appendChild(summary);
         const fields = el("div", "fields");
         card.appendChild(fields);
         s = { order, fields, card };
@@ -339,8 +461,10 @@ window.Creator = (function () {
       }
       for (const [region, regionGroups] of regions) {
         const details = el("details", "region");
-        if (openRegions.has(region)) details.open = true;
-        details.appendChild(el("summary", null, region));
+        const summary = el("summary", null, region);
+        summary.dataset.key = "reg:" + region;
+        if (openKeys.has("reg:" + region)) details.open = true;
+        details.appendChild(summary);
         const inner = el("div", "fields");
         for (const g of regionGroups)
           inner.appendChild(control(g, g.attribute || g.label));
@@ -357,6 +481,95 @@ window.Creator = (function () {
     [...sections.values()]
       .sort((a, b) => a.order - b.order)
       .forEach((s) => root.appendChild(s.card));
+  }
+
+  // -------------------------------------------------- live prompt panel
+
+  // The panel reads the SAVED record via image_prompt_preview: assembled
+  // positive, per-fragment provenance, token count, 77-boundary marker. It
+  // refreshes on entering edit mode and after every successful save.
+  function clearPromptPanel(message) {
+    const panel = $("creator-prompt");
+    if (!panel) return;
+    panel.textContent = "";
+    panel.appendChild(el("h2", null, "Prompt preview"));
+    panel.appendChild(el("p", "hint", message ||
+      "Save the character to see the assembled image prompt, its fragments, " +
+      "and the CLIP token budget."));
+  }
+
+  async function refreshPromptPanel(id) {
+    const panel = $("creator-prompt");
+    if (!panel) return;
+    if (!id) { clearPromptPanel(); return; }
+    let res;
+    try {
+      res = await window.pywebview.api.image_prompt_preview(id);
+    } catch (err) {
+      clearPromptPanel("Prompt preview unavailable: " + err);
+      return;
+    }
+    if (!res || !res.ok) {
+      clearPromptPanel("Prompt preview unavailable" +
+        (res && (res.error || res.kind) ? `: ${res.error || res.kind}` : "."));
+      return;
+    }
+    renderPromptPanel(res);
+  }
+
+  function renderPromptPanel(res) {
+    const panel = $("creator-prompt");
+    panel.textContent = "";
+    panel.appendChild(el("h2", null, "Prompt preview"));
+
+    const tokens = res.tokens || {};
+    const meta = el("div", "prompt-meta");
+    if (tokens.available) {
+      const over = !tokens.within_budget;
+      const chip = el("span", "token-chip" + (over ? " over" : " ok"),
+        `${tokens.total} / ${tokens.content_budget} CLIP tokens`);
+      meta.appendChild(chip);
+      meta.appendChild(el("span", "prompt-note", over
+        ? "Over the single-window budget — chunked encoding carries the rest, " +
+          "but fragments past the marker attend more weakly."
+        : "Within the 75-token window."));
+    } else {
+      meta.appendChild(el("span", "token-chip muted", "token count unavailable"));
+      meta.appendChild(el("span", "prompt-note",
+        "The CLIP tokenizer is not on this machine — counts show on the target."));
+    }
+    panel.appendChild(meta);
+
+    const pos = el("div", "prompt-positive");
+    pos.appendChild(el("div", "field-label", "Assembled positive"));
+    pos.appendChild(el("div", "prompt-text", res.positive || "(empty)"));
+    panel.appendChild(pos);
+
+    // per-fragment provenance, with the 77-boundary marker between the pieces
+    // that fit and the pieces that overran the single window
+    const pieces = res.pieces || [];
+    const perPiece = tokens.per_piece || [];
+    const boundary = tokens.available ? tokens.boundary_index : pieces.length;
+    const list = el("div", "prompt-pieces");
+    list.appendChild(el("div", "field-label", "Fragments (in assembly order)"));
+    pieces.forEach((p, i) => {
+      if (i === boundary && boundary < pieces.length) {
+        list.appendChild(el("div", "boundary", "— 77-token boundary —"));
+      }
+      const row = el("div", "piece" + (i >= boundary ? " past" : ""));
+      row.appendChild(el("span", "piece-src", p.source));
+      row.appendChild(el("span", "piece-text", p.text));
+      const pp = perPiece[i];
+      if (pp) row.appendChild(el("span", "piece-tok", `+${pp.tokens}`));
+      list.appendChild(row);
+    });
+    if (!pieces.length) list.appendChild(el("p", "hint", "No fragments."));
+    panel.appendChild(list);
+
+    const neg = el("details", "prompt-negative");
+    neg.appendChild(el("summary", null, "Negative prompt"));
+    neg.appendChild(el("div", "prompt-text", res.negative || "(empty)"));
+    panel.appendChild(neg);
   }
 
   // ------------------------------------------------------ edit mode (Stage 4)
@@ -386,8 +599,8 @@ window.Creator = (function () {
     if (!issues || !issues.length) return;
     const warn = el("div", "alert warn");
     warn.appendChild(el("div", null,
-      "This record references options that are no longer loaded — those " +
-      "values are kept on the record but cannot be re-picked here:"));
+      "This record references options that are no longer loaded, or is missing " +
+      "part of the render-identity minimum — fix or re-pick below:"));
     for (const line of issues) warn.appendChild(el("div", "alert-line", line));
     $("creator-alerts").appendChild(warn);
   }
@@ -410,6 +623,7 @@ window.Creator = (function () {
       return;
     }
     editing = { id: res.id, name: res.name, snapshot: res };
+    lastSavedId = res.id;
     fillFromRecord(res);
     mode = "detailed"; // edits always see the full form
     for (const btn of $("mode-toggle").children)
@@ -424,10 +638,12 @@ window.Creator = (function () {
     feedback.textContent = "";
     render();
     showRecordIssues(res.issues);
+    refreshPromptPanel(res.id);
   }
 
   function endEdit(goLibrary) {
     editing = null;
+    lastSavedId = null;
     applyChrome();
     state.name = "";
     state.age = null;
@@ -439,6 +655,7 @@ window.Creator = (function () {
     $("create-feedback").className = "feedback";
     $("create-feedback").textContent = "";
     setMode("quick"); // restores the hint + re-renders
+    clearPromptPanel();
     if (goLibrary && window.AppNav) window.AppNav.show("library");
   }
 
@@ -470,28 +687,103 @@ window.Creator = (function () {
     }
     if (staleBits.length && hasLora) {
       const row = el("div", "offer-row");
+      const jobArea = el("div", "offer-job");
+      // Route regeneration through the JOB contract (progress + cancel) — a
+      // synchronous image_generate_catalog here is the shipped 287-s silent
+      // hang 5.5a exists to kill.
       const regen = el("button", "lib-btn accent", "Regenerate catalog now");
-      regen.addEventListener("click", async () => {
+      regen.addEventListener("click", () => {
         regen.disabled = true;
-        regen.textContent = "Regenerating…";
-        let out;
-        try {
-          out = await window.pywebview.api.image_generate_catalog(cid);
-        } catch (err) {
-          out = { ok: false, error: String(err) };
-        }
-        regen.textContent = out.ok ? "Regenerated" : "Did not run";
-        wrap.appendChild(el("div", "alert-line", out.ok
-          ? `Catalog regenerated — ${out.frames ?? "?"} frames.`
-          : `Regeneration did not run: ${out.error || out.kind}`));
+        window.Jobs.mount(jobArea, {
+          kind: "catalog", targetId: cid, label: "Regenerate catalog",
+        });
       });
       const later = el("button", "lib-btn ghost", "Keep current frames");
       later.addEventListener("click", () => { box.textContent = ""; });
       row.appendChild(regen);
       row.appendChild(later);
       wrap.appendChild(row);
+      wrap.appendChild(jobArea);
     }
     box.appendChild(wrap);
+  }
+
+  // The create wizard's final step (5.5d, §10 quick-create): OFFER a reference
+  // image. The character already saved without one — this only invites it.
+  // Generate N base candidates as a job, pick one → set_reference.
+  function showCreateReferenceStep(id, name) {
+    const box = $("creator-alerts");
+    box.textContent = "";
+    const wrap = el("div", "alert offer");
+    wrap.appendChild(el("div", null,
+      `“${name}” is saved. Add a reference image now? This is the quick-create ` +
+      "identity tier (IP-Adapter) — optional; you can always add or change it " +
+      "later from the character's profile."));
+    const row = el("div", "offer-row");
+    const jobArea = el("div", "offer-job");
+    const gridArea = el("div", "offer-grid");
+    const gen = el("button", "lib-btn accent", "Generate avatar candidates");
+    gen.addEventListener("click", () => {
+      gen.disabled = true;
+      gridArea.textContent = "";
+      window.Jobs.mount(jobArea, {
+        kind: "avatar", targetId: id, options: { count: 4 },
+        label: "Avatar candidates",
+        onDone: (st) => {
+          if (window.Jobs.isSuccess(st) && st.result.candidates &&
+              st.result.candidates.length)
+            renderCreateCandidates(id, st.result.candidates, gridArea, wrap);
+          else gen.disabled = false;  // let them retry (engine unavailable etc.)
+        },
+      });
+    });
+    const skip = el("button", "lib-btn ghost", "Skip — go to Library");
+    skip.addEventListener("click", () => endEdit(true));
+    row.appendChild(gen);
+    row.appendChild(skip);
+    wrap.appendChild(row);
+    wrap.appendChild(jobArea);
+    wrap.appendChild(gridArea);
+    box.appendChild(wrap);
+  }
+
+  function renderCreateCandidates(id, cands, gridArea, wrap) {
+    gridArea.textContent = "";
+    gridArea.appendChild(el("div", "field-label", "Pick one as the reference:"));
+    const grid = el("div", "pf-grid");
+    for (const c of cands) {
+      const cell = el("button", "pf-grid-cell");
+      cell.type = "button";
+      const img = el("img");
+      img.hidden = true;
+      img.alt = "";
+      cell.appendChild(img);
+      // CSP forbids disk paths — fetch a data-URI thumbnail for each candidate.
+      window.pywebview.api.image_frame_thumbnail(id, c.path, 256)
+        .then((r) => {
+          if (r && r.ok && r.thumbnail) { img.src = r.thumbnail; img.hidden = false; }
+        })
+        .catch(() => { /* leave the placeholder */ });
+      cell.addEventListener("click", async () => {
+        let res;
+        try { res = await window.pywebview.api.image_set_reference(id, c.path); }
+        catch (err) { res = { ok: false, error: String(err) }; }
+        if (res.ok) {
+          gridArea.textContent = "";
+          const done = el("div", "offer-row");
+          done.appendChild(el("div", "alert-line", "Reference set."));
+          const go = el("button", "lib-btn accent", "Go to Library");
+          go.addEventListener("click", () => endEdit(true));
+          done.appendChild(go);
+          wrap.appendChild(done);
+        } else {
+          wrap.appendChild(el("div", "alert-line",
+            "Could not set reference: " + (res.error || res.kind)));
+        }
+      });
+      grid.appendChild(cell);
+    }
+    gridArea.appendChild(grid);
   }
 
   // ---------------------------------------------------------------- save
@@ -539,8 +831,16 @@ window.Creator = (function () {
     if (!target) return;
     target.classList.add("bad");
     const region = target.closest("details");
-    if (region) region.open = true; // surface a fault hidden in a collapsed region
+    if (region) region.open = true; // surface a fault hidden in a collapsed section
     target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  // Client-side render-identity-minimum check: the backend gate is the truth,
+  // but a missing required group shouldn't need a round trip to surface.
+  function firstMissingRequired(payload) {
+    for (const gid of requiredIds())
+      if (!payload.selections[gid]) return gid;
+    return null;
   }
 
   let saving = false;
@@ -551,7 +851,7 @@ window.Creator = (function () {
     clearHighlights();
 
     // required-field checks up front — the backend re-validates, but normal
-    // use shouldn't need a round trip to learn a name/age is missing
+    // use shouldn't need a round trip to learn a name/age/required is missing
     const payload = buildPayload();
     if (!payload.name) {
       feedback.className = "feedback error";
@@ -563,6 +863,15 @@ window.Creator = (function () {
       feedback.className = "feedback error";
       feedback.textContent = "An age is required.";
       highlightField("age");
+      return;
+    }
+    const missing = firstMissingRequired(payload);
+    if (missing) {
+      const g = catalog.groups.find((x) => x.id === missing);
+      feedback.className = "feedback error";
+      feedback.textContent =
+        `${g ? g.label : missing} is required — it's part of the render-identity minimum.`;
+      highlightField("selections." + missing);
       return;
     }
 
@@ -587,6 +896,7 @@ window.Creator = (function () {
     }
     if (res.ok) {
       feedback.className = "feedback ok";
+      lastSavedId = res.id;
       if (editing) {
         editing.name = res.name;
         feedback.textContent = `Saved “${res.name}”` +
@@ -601,7 +911,10 @@ window.Creator = (function () {
       } else {
         feedback.textContent =
           `Created “${res.name}” (${res.mode}) — saved as ${res.id.slice(0, 8)}…`;
+        // The create wizard's final, optional step: offer a reference image.
+        showCreateReferenceStep(res.id, res.name);
       }
+      refreshPromptPanel(res.id);
     } else {
       feedback.className = "feedback error";
       feedback.textContent = res.error;
@@ -679,8 +992,9 @@ window.Creator = (function () {
     for (const btn of $("mode-toggle").children)
       btn.classList.toggle("on", btn.dataset.mode === next);
     $("mode-hint").textContent = next === "quick"
-      ? "Quick create — the minimal path: name, age, core looks. Identity " +
-        "rides on an IP-Adapter reference (Stage 3); everything is editable later."
+      ? "Quick create — the minimal path: name, age, and the render-identity " +
+        "minimum. Identity rides on an IP-Adapter reference (Stage 3); " +
+        "everything is editable later."
       : "Detailed create — the full path: anatomy by body region, personality, " +
         "wardrobe, and filtered free text. Detailed characters can be promoted " +
         "to a trained identity LoRA (Stage 3).";
@@ -713,6 +1027,7 @@ window.Creator = (function () {
         startPromise = null;
       }
       render();
+      if (!editing) clearPromptPanel();
     })();
     return startPromise;
   }
@@ -729,5 +1044,13 @@ window.Creator = (function () {
     if (catalog) reloadOptions(); else ensureStarted();
   });
 
-  return { ensureStarted, beginEdit };
+  // beginCreate resets to a fresh quick form (used by the Library "Create"
+  // button, 5.5f).
+  function beginCreate() {
+    if (editing) endEdit(false);
+    else { resetForm(); clearPromptPanel(); }
+    ensureStarted();
+  }
+
+  return { ensureStarted, beginEdit, beginCreate };
 })();

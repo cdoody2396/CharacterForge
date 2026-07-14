@@ -126,6 +126,49 @@ class AssembledPrompt:
         }
 
 
+# CLIP encodes 77 slots = BOS + 75 content + EOS. A prompt over the content
+# budget was silently truncated pre-5.5b; chunked encoding now carries all of
+# it, but the accounting still marks the old 77-boundary so the creator can show
+# what USED to be dropped.
+CLIP_WINDOW = 77
+CLIP_CONTENT_BUDGET = CLIP_WINDOW - 2
+
+
+def token_report(assembled: AssembledPrompt, count) -> dict:
+    """Per-fragment + total CLIP-token accounting for the assembled positive,
+    using ``count`` (a ``Callable[[str], int]`` over the model's own tokenizer —
+    see :func:`app.imagegen.engine.clip_token_counter`). Reports the total, the
+    per-piece marginal cost, and the index of the first piece that overran the
+    old single-window 77-boundary (``boundary_index == len(pieces)`` when the
+    whole prompt fits). ``count`` counts CONTENT tokens (no BOS/EOS)."""
+    per_piece: list[dict] = []
+    running = ""
+    prev = 0
+    boundary = len(assembled.pieces)
+    for i, piece in enumerate(assembled.pieces):
+        running = piece.text if not running else running + ", " + piece.text
+        cumulative = count(running)
+        per_piece.append({
+            "source": piece.source,
+            "text": piece.text,
+            "tokens": cumulative - prev,
+            "cumulative": cumulative,
+        })
+        if boundary == len(assembled.pieces) and cumulative > CLIP_CONTENT_BUDGET:
+            boundary = i
+        prev = cumulative
+    total = prev if assembled.pieces else 0
+    return {
+        "available": True,
+        "total": total,
+        "window": CLIP_WINDOW,
+        "content_budget": CLIP_CONTENT_BUDGET,
+        "boundary_index": boundary,
+        "within_budget": total <= CLIP_CONTENT_BUDGET,
+        "per_piece": per_piece,
+    }
+
+
 def _load_fragments(path: Path) -> tuple[str, ...]:
     """One fragment per line; '#' comments and blank lines ignored."""
     fragments: list[str] = []

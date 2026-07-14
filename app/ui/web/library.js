@@ -1,9 +1,12 @@
-/* Stage-4 library & management view (§14): list / sort / filter saved
-   characters, per-character footprint (LoRA + catalog + cached frames),
-   deletion recommendation past the cache threshold, stale-catalog badge with
-   an OFFERED (never forced) regeneration, cache clearing, edit hand-off to
-   the creator, and delete with an inline two-step confirm (no dialogs — the
-   one-window rule). All backend access goes through window.pywebview.api. */
+/* Library & management view (§14), extended for scale (5.5e): list / sort /
+   tag-filter saved characters, a grid⇄list layout toggle with a VIRTUALIZED
+   list (only the visible window is in the DOM, so 200+ characters stay
+   responsive), per-character footprint (read from the cached value the record
+   carries — no per-row disk walk), staleness, cleanup recommendation, cache
+   clearing, edit + OPEN (→ the 5.5d profile) hand-offs, and delete with an
+   inline two-step confirm. Catalog regeneration runs through the JOB contract
+   (progress + cancel) — never the synchronous bridge (the 287-s hang). All
+   backend access goes through window.pywebview.api. */
 
 "use strict";
 
@@ -23,7 +26,14 @@ window.Library = (function () {
   const thumbs = new Map();   // id -> data URI | null (fetched lazily, cached)
   const busy = new Set();     // ids with an in-flight action (regen/clear/delete)
 
-  const state = { search: "", sort: "updated_desc", filter: "all" };
+  const state = {
+    search: "", sort: "updated_desc", filter: "all",
+    tags: new Set(),          // selected tag labels (AND-match)
+    layout: "grid",           // grid | list
+  };
+
+  const ROW_H = 76;           // fixed list-row height for virtualization
+  const OVERSCAN = 6;
 
   // ------------------------------------------------------------- helpers
 
@@ -41,7 +51,6 @@ window.Library = (function () {
 
   function fmtDate(iso) {
     if (!iso) return "—";
-    // ISO-8601 UTC from the backend; show the date part plainly.
     return String(iso).slice(0, 10);
   }
 
@@ -69,6 +78,13 @@ window.Library = (function () {
       case "recommend": rows = rows.filter((r) => r.recommend_delete); break;
       case "broken": rows = rows.filter((r) => !r.ok); break;
     }
+    if (state.tags.size) {
+      rows = rows.filter((r) => {
+        const rt = new Set(r.tags || []);
+        for (const t of state.tags) if (!rt.has(t)) return false;
+        return true;
+      });
+    }
     const cmp = {
       updated_desc: (a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")),
       created_desc: (a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")),
@@ -79,11 +95,16 @@ window.Library = (function () {
     return rows;
   }
 
+  // Every tag label present across loadable rows, sorted, for the chip filter.
+  function tagUniverse() {
+    const set = new Set();
+    if (data) for (const r of data.characters)
+      for (const t of (r.tags || [])) set.add(t);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }
+
   // ------------------------------------------------------------- actions
 
-  // Action feedback goes to the PERSISTENT #lib-status line, never a per-card
-  // span — render() rebuilds all cards, so a captured span would be detached
-  // by the time an action resolves (a failed delete/clear would show nothing).
   function status(text, isError) {
     const node = $("lib-status");
     if (!node) return;
@@ -91,8 +112,6 @@ window.Library = (function () {
     node.textContent = text || "";
   }
 
-  // busy ids are managed here (add before, delete in finally) and survive a
-  // refresh, so an in-flight row's buttons stay disabled across a re-list.
   async function runAction(id, fn) {
     busy.add(id);
     render();
@@ -113,26 +132,28 @@ window.Library = (function () {
         await refresh();
       } catch (err) {
         status("Delete failed: " + err, true);
-        render();  // re-enable this row's buttons
+        render();
       }
     });
   }
 
+  // Catalog regeneration through the JOB contract (progress + cancel). The old
+  // synchronous image_generate_catalog call here was the shipped 287-s hang.
   function doRegenerate(row) {
-    return runAction(row.id, async () => {
-      status(`Regenerating “${row.name}”'s catalog — this can take minutes…`);
-      let res;
-      try {
-        res = await window.pywebview.api.image_generate_catalog(row.id);
-      } catch (err) {
-        res = { ok: false, error: String(err) };
-      }
-      if (res.ok) {
-        status(`Catalog regenerated for “${row.name}” — ${res.frames ?? "?"} frames.`);
-      } else {
-        status(`Regeneration for “${row.name}” did not run: ${res.error || res.kind}`, true);
-      }
-      await refresh();
+    busy.add(row.id);
+    render();
+    status(`Regenerating “${row.name}”'s catalog…`);
+    window.Jobs.mount($("lib-job"), {
+      kind: "catalog", targetId: row.id, label: `Regenerate ${row.name}`,
+      async onDone(st) {
+        busy.delete(row.id);
+        if (window.Jobs.isSuccess(st))
+          status(`Catalog regenerated for “${row.name}” — ${st.result.frames ?? "?"} frames.`);
+        else
+          status(`Regeneration for “${row.name}” did not run: ` +
+            window.Jobs.summarize(st), true);
+        await refresh();
+      },
     });
   }
 
@@ -148,6 +169,11 @@ window.Library = (function () {
         render();
       }
     });
+  }
+
+  function openProfile(row) {
+    window.Profile.open(row.id);
+    window.AppNav.show("profile");
   }
 
   // ------------------------------------------------------------ thumbnails
@@ -185,10 +211,79 @@ window.Library = (function () {
     return wrap;
   }
 
-  function card(row) {
-    const isBusy = busy.has(row.id);
-    const c = el("section", "card lib-card");
+  function badgesFor(row) {
+    const badges = el("div", "badges");
+    if (row.ok) {
+      if (row.has_lora) badges.appendChild(badge("LoRA", "ok"));
+      else if (row.has_reference) badges.appendChild(badge("reference"));
+      if (row.catalog && row.catalog.error) badges.appendChild(badge("catalog?", "warn"));
+      else if (row.catalog && row.catalog.frames)
+        badges.appendChild(badge(`catalog ${row.catalog.frames}`,
+          row.catalog.stale ? "warn" : ""));
+      if (row.catalog && row.catalog.stale) badges.appendChild(badge("stale", "warn"));
+      if (row.cache && row.cache.error) badges.appendChild(badge("cache?", "warn"));
+      else if (row.cache && row.cache.frames)
+        badges.appendChild(badge(`cache ${row.cache.frames}`));
+    } else {
+      badges.appendChild(badge(row.kind || "broken", "warn"));
+    }
+    return badges;
+  }
 
+  function actionsFor(row) {
+    const isBusy = busy.has(row.id);
+    const actions = el("div", "lib-actions");
+    if (row.ok) {
+      const open = el("button", "lib-btn accent", "Open");
+      open.disabled = isBusy;
+      open.title = "Open the character profile (identity, catalog, posing)";
+      open.addEventListener("click", () => openProfile(row));
+      actions.appendChild(open);
+
+      const edit = el("button", "lib-btn", "Edit");
+      edit.disabled = isBusy;
+      edit.addEventListener("click", () => {
+        window.Creator.beginEdit(row.id);
+        window.AppNav.show("create");
+      });
+      actions.appendChild(edit);
+
+      if (row.catalog && row.catalog.stale && row.has_lora) {
+        const regen = el("button", "lib-btn", "Regenerate");
+        regen.title = "Re-render the seed catalog to match the edited record";
+        regen.disabled = isBusy;
+        regen.addEventListener("click", () => doRegenerate(row));
+        actions.appendChild(regen);
+      }
+      if (row.cache && row.cache.frames) {
+        const clear = el("button", "lib-btn ghost", "Clear cache");
+        clear.title = "Evicted frames regenerate on demand if needed again";
+        clear.disabled = isBusy;
+        clear.addEventListener("click", () => doClearCache(row));
+        actions.appendChild(clear);
+      }
+    }
+
+    if (confirmDeleteId === row.id) {
+      const confirm = el("button", "lib-btn danger", "Confirm delete");
+      confirm.disabled = isBusy;
+      confirm.addEventListener("click", () => doDelete(row));
+      const cancel = el("button", "lib-btn ghost", "Keep");
+      cancel.disabled = isBusy;
+      cancel.addEventListener("click", () => { confirmDeleteId = null; render(); });
+      actions.appendChild(confirm);
+      actions.appendChild(cancel);
+    } else {
+      const del = el("button", "lib-btn ghost", "Delete…");
+      del.disabled = isBusy;
+      del.addEventListener("click", () => { confirmDeleteId = row.id; render(); });
+      actions.appendChild(del);
+    }
+    return actions;
+  }
+
+  function card(row) {
+    const c = el("section", "card lib-card");
     const head = el("div", "lib-head");
     const thumb = el("div", "lib-thumb");
     const img = el("img");
@@ -208,102 +303,97 @@ window.Library = (function () {
         `created ${fmtDate(row.created_at)} · updated ${fmtDate(row.updated_at)}` +
         ` · id ${String(row.id).slice(0, 8)}…`));
     } else {
-      info.appendChild(el("div", "lib-name", `Unreadable record`));
+      info.appendChild(el("div", "lib-name", "Unreadable record"));
       info.appendChild(el("div", "lib-meta", `id ${row.id}`));
-      const err = el("div", "alert warn",
+      info.appendChild(el("div", "alert warn",
         `${row.kind || "error"}: ${row.error || "this record cannot be loaded"}` +
-        " — it can still be deleted.");
-      info.appendChild(err);
+        " — it can still be deleted."));
     }
-
-    const badges = el("div", "badges");
-    if (row.ok) {
-      if (row.has_lora) badges.appendChild(badge("LoRA", "ok"));
-      else if (row.has_reference) badges.appendChild(badge("reference"));
-      if (row.catalog && row.catalog.error) badges.appendChild(badge("catalog?", "warn"));
-      else if (row.catalog && row.catalog.frames)
-        badges.appendChild(badge(`catalog ${row.catalog.frames}`,
-                                 row.catalog.stale ? "warn" : ""));
-      if (row.catalog && row.catalog.stale) badges.appendChild(badge("stale", "warn"));
-      if (row.cache && row.cache.error) badges.appendChild(badge("cache?", "warn"));
-      else if (row.cache && row.cache.frames)
-        badges.appendChild(badge(`cache ${row.cache.frames}`));
-    } else {
-      badges.appendChild(badge(row.kind || "broken", "warn"));
+    info.appendChild(badgesFor(row));
+    if (row.ok && row.tags && row.tags.length) {
+      const tagRow = el("div", "lib-tags");
+      for (const t of row.tags.slice(0, 8))
+        tagRow.appendChild(el("span", "lib-tag", t));
+      info.appendChild(tagRow);
     }
-    info.appendChild(badges);
     info.appendChild(footprintLine(row));
-
     if (row.recommend_delete) {
       info.appendChild(el("div", "lib-recommend",
         "Cache has grown past the cleanup threshold — consider clearing this " +
         "character's cache (evicted frames regenerate on demand)."));
     }
-
     head.appendChild(info);
     c.appendChild(head);
-
-    const actions = el("div", "lib-actions");
-
-    if (row.ok) {
-      const edit = el("button", "lib-btn", "Edit");
-      edit.disabled = isBusy;
-      edit.addEventListener("click", () => {
-        window.Creator.beginEdit(row.id);
-        window.AppNav.show("create");
-      });
-      actions.appendChild(edit);
-
-      if (row.catalog && row.catalog.stale && row.has_lora) {
-        const regen = el("button", "lib-btn accent", "Regenerate catalog");
-        regen.title = "Re-render the seed catalog to match the edited record";
-        regen.disabled = isBusy;
-        regen.addEventListener("click", () => doRegenerate(row));
-        actions.appendChild(regen);
-      }
-
-      if (row.cache && row.cache.frames) {
-        const clear = el("button", "lib-btn", "Clear cache");
-        clear.title = "Evicted frames regenerate on demand if needed again";
-        clear.disabled = isBusy;
-        clear.addEventListener("click", () => doClearCache(row));
-        actions.appendChild(clear);
-      }
-    }
-
-    if (confirmDeleteId === row.id) {
-      const confirm = el("button", "lib-btn danger", "Confirm delete");
-      confirm.disabled = isBusy;
-      confirm.addEventListener("click", () => doDelete(row));
-      const cancel = el("button", "lib-btn ghost", "Keep");
-      cancel.disabled = isBusy;
-      cancel.addEventListener("click", () => {
-        confirmDeleteId = null;
-        render();
-      });
-      actions.appendChild(confirm);
-      actions.appendChild(cancel);
-      actions.appendChild(el("span", "lib-confirm-hint",
+    c.appendChild(actionsFor(row));
+    if (confirmDeleteId === row.id)
+      c.appendChild(el("div", "lib-confirm-hint",
         "Deletes the record, reference, LoRA, catalog, and cache."));
-    } else {
-      const del = el("button", "lib-btn ghost", "Delete…");
-      del.disabled = isBusy;
-      del.addEventListener("click", () => {
-        confirmDeleteId = row.id;
-        render();
-      });
-      actions.appendChild(del);
-    }
-
-    c.appendChild(actions);
     return c;
+  }
+
+  // A compact single-line row for the virtualized list layout.
+  function listRow(row) {
+    const r = el("div", "lib-row" + (row.ok ? "" : " broken"));
+    const thumb = el("div", "lib-thumb sm");
+    const img = el("img");
+    img.hidden = true;
+    img.alt = "";
+    thumb.appendChild(img);
+    thumb.appendChild(el("span", "lib-thumb-fallback", row.ok ? "" : "!"));
+    if (row.ok) loadThumb(row, img);
+    r.appendChild(thumb);
+
+    const mid = el("div", "lib-row-mid");
+    const name = el("div", "lib-name",
+      row.ok ? row.name : "Unreadable record");
+    if (row.ok) name.appendChild(el("span", "lib-age", ` ${row.age}`));
+    mid.appendChild(name);
+    mid.appendChild(badgesFor(row));
+    r.appendChild(mid);
+
+    r.appendChild(el("div", "lib-row-fp", fmtBytes(totalBytes(row))));
+    r.appendChild(actionsFor(row));
+    return r;
+  }
+
+  // -------------------------------------------------- virtualized list
+
+  function renderVirtualList(list, rows) {
+    list.className = "lib-list list";
+    list.textContent = "";
+    const spacer = el("div", "lib-vspacer");
+    spacer.style.height = rows.length * ROW_H + "px";
+    const win = el("div", "lib-window");
+    spacer.appendChild(win);
+    list.appendChild(spacer);
+
+    function paint() {
+      const scrollTop = list.scrollTop;
+      const height = list.clientHeight || 600;
+      let first = Math.floor(scrollTop / ROW_H) - OVERSCAN;
+      let last = Math.ceil((scrollTop + height) / ROW_H) + OVERSCAN;
+      first = Math.max(0, first);
+      last = Math.min(rows.length, last);
+      win.style.transform = `translateY(${first * ROW_H}px)`;
+      win.textContent = "";
+      for (let i = first; i < last; i++) win.appendChild(listRow(rows[i]));
+    }
+    list.onscroll = paint;
+    paint();
+  }
+
+  function renderGrid(list, rows) {
+    list.className = "lib-list grid";
+    list.onscroll = null;
+    list.textContent = "";
+    for (const row of rows) list.appendChild(card(row));
   }
 
   function render() {
     const list = $("lib-list");
     if (!list) return;
-    list.textContent = "";
-    if (!data) return;
+    renderTagFilter();
+    if (!data) { list.textContent = ""; return; }
     const rows = visibleRows();
     const total = data.characters.length;
     const shownBytes = data.characters.reduce((s, r) => s + totalBytes(r), 0);
@@ -311,20 +401,44 @@ window.Library = (function () {
       ? `${rows.length} of ${total} character${total === 1 ? "" : "s"} shown — ` +
         `${fmtBytes(shownBytes)} on disk across the library.`
       : "No characters yet — create one to see it here.";
-    for (const row of rows) list.appendChild(card(row));
-    if (total && !rows.length) {
-      list.appendChild(el("section", "card hint",
+    if (!rows.length) {
+      list.className = "lib-list " + state.layout;
+      list.onscroll = null;
+      list.textContent = "";
+      if (total) list.appendChild(el("section", "card hint",
         "Nothing matches the current search/filter."));
+      return;
+    }
+    if (state.layout === "list") renderVirtualList(list, rows);
+    else renderGrid(list, rows);
+  }
+
+  function renderTagFilter() {
+    const box = $("lib-tagfilter");
+    if (!box) return;
+    box.textContent = "";
+    const tags = tagUniverse();
+    if (!tags.length) return;
+    for (const t of tags) {
+      const chip = el("button", "tag-chip" + (state.tags.has(t) ? " on" : ""), t);
+      chip.type = "button";
+      chip.addEventListener("click", () => {
+        if (state.tags.has(t)) state.tags.delete(t);
+        else state.tags.add(t);
+        render();
+      });
+      box.appendChild(chip);
+    }
+    if (state.tags.size) {
+      const clr = el("button", "tag-chip clear", "clear tags");
+      clr.type = "button";
+      clr.addEventListener("click", () => { state.tags.clear(); render(); });
+      box.appendChild(clr);
     }
   }
 
   // ---------------------------------------------------------------- load
 
-  // A refresh requested while one is in flight is coalesced into a single
-  // re-run afterwards, so an action's `await refresh()` (post-delete) can
-  // never silently no-op against a background refresh and leave the deleted
-  // row on screen. busy/confirm state is deliberately NOT cleared here —
-  // an in-flight row must stay disabled across a re-list.
   let refreshPending = false;
 
   async function refresh() {
@@ -338,10 +452,14 @@ window.Library = (function () {
       if (confirmDeleteId && !present.has(confirmDeleteId))
         confirmDeleteId = null;
       for (const id of [...busy]) if (!present.has(id)) busy.delete(id);
+      // drop selected tags no longer present anywhere
+      const universe = new Set(tagUniverse());
+      for (const t of [...state.tags]) if (!universe.has(t)) state.tags.delete(t);
       ok = true;
     } catch (err) {
       const list = $("lib-list");
       if (list) {
+        list.className = "lib-list " + state.layout;
         list.textContent = "";
         list.appendChild(el("section", "card alert warn",
           "Could not load the library: " + err));
@@ -354,6 +472,13 @@ window.Library = (function () {
   }
 
   // ---------------------------------------------------------------- init
+
+  function setLayout(next) {
+    state.layout = next;
+    for (const btn of $("lib-layout").children)
+      btn.classList.toggle("on", btn.dataset.layout === next);
+    render();
+  }
 
   $("lib-refresh").addEventListener("click", refresh);
   $("lib-search").addEventListener("input", (e) => {
@@ -368,6 +493,8 @@ window.Library = (function () {
     state.filter = e.target.value;
     render();
   });
+  for (const btn of $("lib-layout").children)
+    btn.addEventListener("click", () => setLayout(btn.dataset.layout));
 
   return { refresh };
 })();

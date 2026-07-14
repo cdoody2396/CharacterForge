@@ -8,6 +8,7 @@
       "order": 20,
       "section": "Appearance",
       "quick": true,
+      "required": true,
       "options": [
         { "id": "porcelain", "label": "Porcelain", "prompt": "porcelain skin", "color": "#f6e6e0" },
         { "id": "fair", "label": "Fair", "prompt": "fair skin", "color": "#f2d6c4" },
@@ -29,6 +30,7 @@
       "order": 21,
       "section": "Appearance",
       "quick": true,
+      "required": true,
       "options": [
         { "id": "black", "label": "Black", "prompt": "black hair", "color": "#1b1b1f" },
         { "id": "brown", "label": "Brown", "prompt": "brown hair", "color": "#5b3a24" },
@@ -51,6 +53,7 @@
       "order": 22,
       "section": "Appearance",
       "quick": true,
+      "required": true,
       "options": [
         { "id": "short", "label": "Short", "prompt": "short hair" },
         { "id": "bob", "label": "Bob", "prompt": "bob cut" },
@@ -71,6 +74,7 @@
       "order": 23,
       "section": "Appearance",
       "quick": true,
+      "required": true,
       "options": [
         { "id": "brown", "label": "Brown", "prompt": "brown eyes", "color": "#6b4226" },
         { "id": "hazel", "label": "Hazel", "prompt": "hazel eyes", "color": "#9a7a3f" },

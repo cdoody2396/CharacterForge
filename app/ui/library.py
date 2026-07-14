@@ -194,22 +194,33 @@ class LibraryService:
         }
 
     def _summary_row(self, cid: str, config) -> dict:
-        try:
-            footprint = self._store.measure_footprint(cid).to_dict()
-            footprint["total_bytes"] = sum(footprint.values())
-        except (InvalidId, ValueError, OSError):
-            footprint = None
-        recommend = bool(
-            footprint
-            and footprint["cache_bytes"] > config.recommend_cache_bytes
-        )
         loaded = load_record_guarded(self._store, self._audit, cid)
         if isinstance(loaded, dict):
-            # Degraded row: the id is real (it came from list_ids), the
-            # record is not usable — surface why, keep delete available.
+            # Degraded row: the id is real (it came from list_ids), the record
+            # is not usable — surface why, keep delete available. A broken
+            # record has no cached footprint to read, so MEASURE it directly
+            # here (5.5e: the disk walk stays off the hot path — this branch is
+            # for the rare corrupt/blocked record, not the common list).
+            try:
+                footprint = self._store.measure_footprint(cid).to_dict()
+                footprint["total_bytes"] = sum(footprint.values())
+            except (InvalidId, ValueError, OSError):
+                footprint = None
+            recommend = bool(
+                footprint
+                and footprint["cache_bytes"] > config.recommend_cache_bytes
+            )
             return {"id": cid, "ok": False, "kind": loaded.get("kind"),
                     "error": loaded.get("error"), "name": None,
                     "footprint": footprint, "recommend_delete": recommend}
+        # 5.5e: read the CACHED footprint off the record instead of walking the
+        # tree per row (~10k stat()s at 200 characters bought nothing). The
+        # artifact ops (train/catalog/matte/on-demand/clear) refresh it on
+        # change and the reconcile sweep recomputes it, so this stays current;
+        # a record predating the cache reads 0s until the next reconcile.
+        footprint = loaded.identity.footprint.to_dict()
+        footprint["total_bytes"] = sum(footprint.values())
+        recommend = footprint["cache_bytes"] > config.recommend_cache_bytes
         has_reference = (
             resolve_contained(self._store, cid,
                               loaded.identity.reference_image_path)
@@ -225,11 +236,32 @@ class LibraryService:
             "has_lora": bool(loaded.identity.has_lora
                              and loaded.identity.lora_path),
             "has_reference": has_reference,
+            "tags": self._tag_labels(loaded),
             "catalog": self._manifest_summary(cid, "catalog"),
             "cache": self._manifest_summary(cid, "cache"),
             "footprint": footprint,
-            "recommend_delete": recommend,
+            "recommend_delete": bool(recommend),
         }
+
+    def _tag_labels(self, record: CharacterRecord) -> list[str]:
+        """The character's multi-select tag values (archetype / distinctive
+        features / traits / wardrobe) resolved to human labels, for the 5.5e
+        tag filter. Deduped, order-stable; an option id no longer in the
+        catalog falls back to the raw id (the record stays the source of
+        truth, §15). Chat-only groups (traits, render:false) are included —
+        they are still identity the user filters by."""
+        catalog = self._catalog()
+        labels: list[str] = []
+        seen: set[str] = set()
+        for gid, opt_ids in record.tags.items():
+            group = catalog.get(gid)
+            for oid in opt_ids:
+                option = group.get_option(oid) if group else None
+                label = option.label if option else str(oid)
+                if label not in seen:
+                    seen.add(label)
+                    labels.append(label)
+        return labels
 
     def _manifest_summary(self, cid: str, channel: str) -> dict:
         loader = (self._store.load_catalog if channel == "catalog"
@@ -257,6 +289,8 @@ class LibraryService:
                               loaded.identity.reference_image_path)
             is not None
         )
+        footprint = loaded.identity.footprint.to_dict()
+        footprint["total_bytes"] = sum(footprint.values())
         return {
             "ok": True,
             "id": loaded.id,
@@ -273,6 +307,8 @@ class LibraryService:
                                  and loaded.identity.lora_path),
                 "has_reference": has_reference,
             },
+            # 5.5d profile header reads the cached footprint (5.5e) here.
+            "footprint": footprint,
             "issues": loaded.validate_against(self._catalog()),
         }
 
@@ -431,6 +467,15 @@ class LibraryService:
         if capped.get("ok"):
             out["cache_evicted"] = capped.get("evicted", 0)
             out["bytes_freed"] += capped.get("freed_bytes", 0)
+
+        # 6) 5.5e: recompute + cache the footprint. The sweeps above just
+        #    changed the on-disk bytes (staging removed, orphans swept,
+        #    evictions), and this is also the migration path for records
+        #    written before the cache existed (their stored footprint is 0s
+        #    until now). Best-effort — a blocked/corrupt record simply keeps
+        #    the degraded-row measure path in list_characters.
+        self._images.refresh_footprint(cid)
+
         # A channel can be flagged corrupt by both its keep-set build and its
         # verify pass — one note per distinct reason.
         out["notes"] = sorted(set(out["notes"]))

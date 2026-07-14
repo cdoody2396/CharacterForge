@@ -127,6 +127,50 @@ def pin_hf_offline(settings: Any) -> None:
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 
+def _pipeline_config_dir(settings: Any) -> Path | None:
+    """Resolve ``models.image.pipeline_config_dir`` to an absolute path (mirrors
+    ``ImageEngine._resolve``), or None if unset."""
+    raw = settings.get("models.image.pipeline_config_dir")
+    if raw is None or not str(raw).strip():
+        return None
+    path = Path(str(raw))
+    return path if path.is_absolute() else APP_ROOT / path
+
+
+def clip_token_counter(settings: Any):
+    """A ``Callable[[str], int]`` over the MODEL's own CLIP tokenizer
+    (``<pipeline_config_dir>/tokenizer``, already on disk from the 3b offline
+    posture), or ``None`` when it is unavailable — no ``pipeline_config_dir``
+    configured, the tokenizer files absent, or ``transformers`` not installed
+    (the GPU-less sandbox). Deliberately returns None rather than vendoring a
+    second BPE that could drift from the model's — an honest "unavailable" beats
+    a wrong number (Stage 5.5b). Counts CONTENT tokens (no BOS/EOS), matching
+    the 75-token-per-window budget."""
+    config = _pipeline_config_dir(settings)
+    if config is None:
+        return None
+    tok_dir = config / "tokenizer"
+    if not (tok_dir / "vocab.json").is_file():
+        return None
+    try:
+        from transformers import CLIPTokenizer
+    except ImportError:
+        return None
+    try:
+        tokenizer = CLIPTokenizer.from_pretrained(str(tok_dir), local_files_only=True)
+    except Exception:  # noqa: BLE001 — any load failure -> honestly unavailable
+        return None
+    # We deliberately measure prompts LONGER than 77 (that is the whole point —
+    # showing the overflow); raise the cap so the tokenizer does not log a
+    # spurious "sequence longer than 77" warning on every over-budget count.
+    tokenizer.model_max_length = 10 ** 9
+
+    def count(text: str) -> int:
+        return len(tokenizer(text, add_special_tokens=False).input_ids)
+
+    return count
+
+
 class EngineUnavailable(RuntimeError):
     """Generation cannot run here/now: missing deps, GPU, or checkpoint."""
 
@@ -144,6 +188,95 @@ class GenerationFailed(RuntimeError):
 class ReferenceUnreadable(RuntimeError):
     """A present, containment-validated reference image could not be decoded
     (corrupt / not an image). Surfaced structured, never a mid-denoise crash."""
+
+
+# -- chunked (long-prompt) CLIP encoding (Stage 5.5b) -------------------------
+#
+# SDXL's CLIP text encoders cap at 77 tokens; diffusers truncates a longer
+# prompt silently. A fully-detailed character record assembles to 106–137
+# tokens (measured with the real BPE), so outfit / style / free-text / pose
+# fragments are dropped past 77 — it has never bitten only because no
+# fully-detailed character had ever been rendered. The fix (no new dependency —
+# compel is rejected, it drags conflicting transformers/diffusers pins; the 3f
+# precedent governs): split the assembled prompt on commas into <=77-token
+# windows, encode_prompt each, and concatenate the embeddings along the
+# SEQUENCE axis so nothing is dropped.
+#
+# API locked against diffusers 0.39 source (StableDiffusionXLPipeline):
+# encode_prompt(prompt, prompt_2=None, device=None, num_images_per_prompt=1,
+#   do_classifier_free_guidance=True, negative_prompt=None, negative_prompt_2=None
+#   ...) -> (prompt_embeds[B,77,2048], negative_prompt_embeds[B,77,2048],
+#            pooled_prompt_embeds[B,1280], negative_pooled_prompt_embeds[B,1280]).
+# Each call pads/truncates to 77, and the negative is tokenized to the positive's
+# length — so padding BOTH chunk lists to a common K and encoding pairwise keeps
+# prompt_embeds and negative_prompt_embeds equal-length (diffusers requires that
+# under CFG) by construction; pooled embeds come from the first window.
+
+# 77 CLIP slots = BOS + 75 content + EOS. Pack windows to <=75 content tokens so
+# encode_prompt's max_length pad never truncates a fragment out of a window.
+CLIP_WINDOW = 77
+CLIP_CONTENT_BUDGET = CLIP_WINDOW - 2
+
+
+def _comma_windows(tokenizer: Any, text: str,
+                   budget: int = CLIP_CONTENT_BUDGET) -> list[str]:
+    """Greedily pack the comma-separated fragments of ``text`` into windows
+    whose CLIP content-token count is ``<= budget``. A single fragment longer
+    than a window is emitted alone (encode_prompt truncates it — nothing
+    shorter is possible without splitting a word). Always returns >= 1 window."""
+    pieces = [p.strip() for p in text.split(",") if p.strip()]
+    if not pieces:
+        return [""]
+    windows: list[str] = []
+    current: list[str] = []
+    for piece in pieces:
+        # Measure the ACTUAL joined window — the ", " separators cost tokens too,
+        # so summing per-fragment counts under-counts and overflows the window.
+        candidate = ", ".join(current + [piece])
+        n = len(tokenizer(candidate, add_special_tokens=False).input_ids)
+        if current and n > budget:
+            windows.append(", ".join(current))
+            current = [piece]
+        else:
+            current.append(piece)
+    if current:
+        windows.append(", ".join(current))
+    return windows or [""]
+
+
+def encode_chunked(pipe: Any, torch: Any, positive: str, negative: str) -> dict:
+    """Long-prompt SDXL encoding: window each prompt on commas, ``encode_prompt``
+    each window, concatenate along the sequence axis. Returns the four embed
+    tensors as pipe kwargs (``prompt_embeds`` / ``negative_prompt_embeds`` /
+    ``pooled_prompt_embeds`` / ``negative_pooled_prompt_embeds``) to pass in
+    place of the ``prompt`` / ``negative_prompt`` strings. A short prompt yields
+    one window — behaviourally identical to the old string path."""
+    pos_windows = _comma_windows(pipe.tokenizer, positive)
+    neg_windows = _comma_windows(pipe.tokenizer, negative)
+    k = max(len(pos_windows), len(neg_windows))
+    pos_windows += [""] * (k - len(pos_windows))
+    neg_windows += [""] * (k - len(neg_windows))
+    pos_list = []
+    neg_list = []
+    pooled = None
+    neg_pooled = None
+    for i in range(k):
+        pe, ne, ppe, npe = pipe.encode_prompt(
+            prompt=pos_windows[i],
+            negative_prompt=neg_windows[i],
+            num_images_per_prompt=1,
+            do_classifier_free_guidance=True,
+        )
+        pos_list.append(pe)
+        neg_list.append(ne)
+        if i == 0:
+            pooled, neg_pooled = ppe, npe
+    return {
+        "prompt_embeds": torch.cat(pos_list, dim=1),
+        "negative_prompt_embeds": torch.cat(neg_list, dim=1),
+        "pooled_prompt_embeds": pooled,
+        "negative_pooled_prompt_embeds": neg_pooled,
+    }
 
 
 @dataclass(frozen=True)
@@ -333,9 +466,10 @@ class _DiffusersSDXLBackend:
         self._apply_sampler(request.sampler)
         generator = torch.Generator("cuda").manual_seed(request.seed)
         with torch.inference_mode():
+            embeds = encode_chunked(self._pipe, torch,
+                                    request.positive, request.negative)
             out = self._pipe(
-                prompt=request.positive,
-                negative_prompt=request.negative,
+                **embeds,
                 width=request.width,
                 height=request.height,
                 num_inference_steps=request.steps,
@@ -481,9 +615,10 @@ class _DiffusersIPAdapterSDXLBackend:
             self._scale_applied = scale
         generator = torch.Generator("cuda").manual_seed(request.seed)
         with torch.inference_mode():
+            embeds = encode_chunked(self._pipe, torch,
+                                    request.positive, request.negative)
             out = self._pipe(
-                prompt=request.positive,
-                negative_prompt=request.negative,
+                **embeds,
                 width=request.width,
                 height=request.height,
                 num_inference_steps=request.steps,
@@ -604,9 +739,10 @@ class _DiffusersLoraSDXLBackend:
             scale = DEFAULT_LORA_SCALE
         generator = torch.Generator("cuda").manual_seed(request.seed)
         with torch.inference_mode():
+            embeds = encode_chunked(self._pipe, torch,
+                                    request.positive, request.negative)
             out = self._pipe(
-                prompt=request.positive,
-                negative_prompt=request.negative,
+                **embeds,
                 width=request.width,
                 height=request.height,
                 num_inference_steps=request.steps,

@@ -31,6 +31,8 @@ produced. (The Layer-2 pixel/face classifier attaches at 3c.)
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import math
 import os
@@ -114,8 +116,9 @@ from .engine import (
     IPAdapterConfig,
     MAX_SEED,
     ReferenceUnreadable,
+    clip_token_counter,
 )
-from .prompt import AssembledPrompt, PromptAssembler, PromptBlocked
+from .prompt import AssembledPrompt, PromptAssembler, PromptBlocked, token_report
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,47 @@ ARTIFACT_LOAD_ERRORS = (
     OSError, json.JSONDecodeError, ValueError, TypeError, LookupError,
     OverflowError, AttributeError, RecursionError, InvalidId,
 )
+
+# Profile-tile thumbnail bound (5.5d). Default fits a grid tile; clamped so a
+# hand-edited request can neither ask for a 0-px nor a memory-blowing decode.
+THUMBNAIL_DEFAULT_PX = 384
+THUMBNAIL_MIN_PX = 64
+THUMBNAIL_MAX_PX = 1024
+
+
+def _coerce_thumb_px(value: object) -> int:
+    """Clamp a UI-supplied thumbnail size into ``[64, 1024]``, defaulting a
+    missing/non-finite/non-numeric value (the recurring hand-edit hazard —
+    Infinity/NaN into ``int()`` raises) to 384 rather than raising."""
+    try:
+        px = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return THUMBNAIL_DEFAULT_PX
+    return max(THUMBNAIL_MIN_PX, min(THUMBNAIL_MAX_PX, px))
+
+
+# Avatar-candidate batch bound (5.5d create-wizard reference step). Small — each
+# render is ~15 s on the target and the user only picks one; a bad hand-edit
+# neither renders zero nor a runaway batch.
+CANDIDATE_DEFAULT_N = 4
+CANDIDATE_MAX_N = 8
+
+
+def _coerce_candidate_count(value: object) -> int:
+    """Clamp a UI-supplied avatar-candidate count into ``[1, 8]``, defaulting a
+    missing/non-finite/non-numeric value to 4 rather than raising."""
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return CANDIDATE_DEFAULT_N
+    return max(1, min(CANDIDATE_MAX_N, n))
+
+
+def _humanize(value: object) -> str:
+    """A booru/id token as a picker label ('over_shoulder' -> 'Over Shoulder').
+    Display-only — the id, never this string, is what reaches generation."""
+    return str(value).replace("_", " ").replace("-", " ").strip().title() \
+        or str(value)
 
 
 class ImageService:
@@ -237,7 +281,23 @@ class ImageService:
             )
         )
         return {"ok": True, "id": loaded.id, "has_reference": has_reference,
-                **assembled.to_dict()}
+                "tokens": self._token_report(assembled), **assembled.to_dict()}
+
+    def _token_report(self, assembled: AssembledPrompt) -> dict:
+        """CLIP-token accounting for the assembled prompt (Stage 5.5b), backed by
+        the model's own tokenizer. Structured ``available: False`` when the
+        tokenizer is not on disk (the sandbox) — never a vendored second BPE, and
+        never a raise (a tokenizer fault must not break the preview)."""
+        count = clip_token_counter(self._settings)
+        if count is None:
+            return {"available": False,
+                    "reason": "the CLIP tokenizer is unavailable here — set "
+                              "models.image.pipeline_config_dir to the local "
+                              "model config (its tokenizer/ subfolder)"}
+        try:
+            return token_report(assembled, count)
+        except Exception as exc:  # noqa: BLE001 — preview must not raise
+            return {"available": False, "reason": f"token counting failed: {exc}"}
 
     # -- base generation (3a) -------------------------------------------------------
 
@@ -298,6 +358,68 @@ class ImageService:
             "positive": assembled.positive,
             "negative": assembled.negative,
         }
+
+    def generate_base_candidates(self, character_id: object,
+                                 count: object = None) -> dict:
+        """Generate several gated base renders (varied seeds) as the avatar
+        CANDIDATES for the create-wizard reference step (5.5d, §10 quick-create
+        IP-Adapter tier). Sets NOTHING — the UI shows the grid, the user picks
+        one, and only then does ``set_reference`` promote it; the character
+        saved fine without a reference, this step only invites one.
+
+        Runs as a job (5.5a): the base backend loads once and stays resident
+        across the batch (``load`` is idempotent), each frame ticks the
+        CancellableEngine progress, and cancellation between frames unwinds
+        through the ``finally`` that always frees the §3 VRAM slot. A partial
+        batch (engine dies mid-run) still returns the frames already rendered."""
+        record = self._load_record(character_id)
+        if isinstance(record, dict):
+            return record
+        n = _coerce_candidate_count(count)
+        assembled = self._assemble(record)
+        if isinstance(assembled, dict):
+            return assembled  # a blocked record
+
+        gen_settings = self._generation_settings()
+        candidates: list[dict] = []
+        error = None
+        try:
+            for _ in range(n):
+                request = GenerationRequest(
+                    positive=assembled.positive, negative=assembled.negative,
+                    seed=None, **gen_settings)
+                try:
+                    result = self._engine.generate(request)
+                except (EngineBusy, EngineUnavailable, GenerationFailed) as exc:
+                    error = {"ok": False, "kind": "engine", "error": str(exc)}
+                    break
+                except ValueError as exc:
+                    error = {"ok": False, "kind": "config", "error": str(exc)}
+                    break
+                try:
+                    frame_path, _sidecar = self._persist_frame(
+                        record, assembled, result, subdir="reference",
+                        prefix="base", kind="base", stage="3a-base")
+                except OSError as exc:
+                    error = {"ok": False, "kind": "io",
+                             "error": f"could not save a candidate frame: {exc}"}
+                    break
+                self._audit.log("image_generated", stage="3a-base",
+                                character_id=record.id, path=str(frame_path),
+                                seed=result.request.seed,
+                                positive=assembled.positive,
+                                negative=assembled.negative,
+                                settings=gen_settings)
+                candidates.append({"path": str(frame_path),
+                                   "seed": result.request.seed})
+        finally:
+            self._engine.unload()  # §3: free the slot on every path (incl. cancel)
+        if not candidates and error is not None:
+            # Nothing rendered — surface the reason (engine-unavailable on the
+            # sandbox). A partial batch is a success (the user still picks).
+            return error
+        return {"ok": True, "id": record.id, "candidates": candidates,
+                "count": len(candidates), "requested": n}
 
     # -- identity reference + steered generation (3b) ---------------------------
 
@@ -1265,13 +1387,37 @@ class ImageService:
 
     @staticmethod
     def _lora_trigger(record: CharacterRecord) -> str:
-        """A stable single-token identity trigger. Derived from a HASH of the
-        id so it is provably ``[a-z0-9]`` even for a hand-edited id (the id is
-        path-safe but not content-gated), and won't collide on a short prefix."""
+        """Mint a stable identity trigger for a NEWLY trained LoRA. Derived
+        from a HASH of the id so it is provably ``[a-z0-9]`` even for a
+        hand-edited id (the id is path-safe but not content-gated), and won't
+        collide on a short prefix.
+
+        Six hex chars (~4 CLIP tokens) — the prior ``"cfid"`` + 12 hex was 16
+        chars = 11 CLIP tokens, 14% of the whole 77-token budget (5.5b). Six
+        hex preserves every 3d property: SHA1-derived, provably ``[0-9a-f]``,
+        and no minor-coded substring is reachable from the hex alphabet.
+
+        Called ONLY at train time. Generation reads the persisted trigger via
+        :meth:`_generation_trigger` — re-deriving here would silently
+        de-trigger every LoRA trained under a different derivation."""
         import hashlib
 
         digest = hashlib.sha1(str(record.id).encode("utf-8")).hexdigest()
-        return "cfid" + digest[:12]
+        return digest[:6]
+
+    def _generation_trigger(self, record: CharacterRecord) -> str:
+        """The trigger a trained LoRA was ACTUALLY conditioned on — read from
+        the persisted manifest, never re-derived. Re-deriving at generation
+        time (the 5.5b defect) silently de-triggers every LoRA whose stored
+        trigger differs from the current derivation: the weights load, the
+        conditioned token is absent, identity weakens with no error. Falls
+        back to the current derivation only when no trigger is recorded (an
+        absent / pre-trigger / unreadable manifest), reproducing the
+        historical behavior for those cases."""
+        manifest = self._load_lora_manifest(record.id)
+        if not isinstance(manifest, dict) and manifest and manifest.trigger:
+            return manifest.trigger
+        return self._lora_trigger(record)
 
     @staticmethod
     def _lora_caption(trigger: str, assembled: AssembledPrompt) -> str:
@@ -1343,7 +1489,7 @@ class ImageService:
             return {"ok": False, "kind": "no_states",
                     "error": "no catalog states to render"}
 
-        trigger = self._lora_trigger(record)
+        trigger = self._generation_trigger(record)
         pending = self._catalog_cell_prompts(record, cells, trigger)
         if not pending:
             return {"ok": False, "kind": "blocked",
@@ -1390,6 +1536,7 @@ class ImageService:
             return {"ok": False, "kind": "io",
                     "error": f"could not store the catalog: {exc}"}
 
+        self.refresh_footprint(record.id)  # 5.5e: catalog bytes changed
         self._audit.log("catalog_generated", character_id=record.id,
                         frames=len(kept), requested=len(cells),
                         incomplete=len(pending))
@@ -1429,6 +1576,7 @@ class ImageService:
         except OSError as exc:
             return {"ok": False, "kind": "io",
                     "error": f"could not clear the catalog: {exc}"}
+        self.refresh_footprint(record.id)  # 5.5e: catalog bytes went to zero
         self._audit.log("catalog_cleared", character_id=record.id)
         return {"ok": True, "id": record.id, "removed": removed}
 
@@ -1820,6 +1968,8 @@ class ImageService:
                         "error": first.get("error")
                         or "matting failed on every frame",
                         **tallies, "results": results}
+        if matted or removed:
+            self.refresh_footprint(record.id)  # 5.5e: matted/purged catalog bytes
         return {"ok": True, "id": record.id, **tallies, "results": results}
 
     def matte_status(self, character_id: object) -> dict:
@@ -2117,6 +2267,47 @@ class ImageService:
         return {"ok": True, "id": record.id, "frames": frames,
                 "count": len(frames)}
 
+    def frame_thumbnail(self, character_id: object, frame_path: object,
+                        max_px: object = None) -> dict:
+        """A downscaled JPEG data URI for ANY frame a character owns —
+        base/identity/bootstrap/catalog/cache renders — for the 5.5d profile
+        UI (the page CSP allows ``img-src data:`` only, so disk paths under
+        ``characters/<id>/`` can never be shown directly; this is the visual
+        surface for every generated frame). ``frame_path`` is the absolute
+        path a generate_* result handed the UI (or a stored char-relative
+        one); it is containment-resolved inside the character's own directory
+        every call — the same untrusted-path stance as ``library.thumbnail``.
+        A missing / corrupt / oversized / escaped path yields
+        ``thumbnail: None``, never a traceback (the tile just shows a
+        placeholder). No GPU."""
+        record = self._load_record(character_id)
+        if isinstance(record, dict):
+            return record
+        resolved = self._resolve_reference(record.id, frame_path,
+                                           allow_absolute=True)
+        if isinstance(resolved, dict):
+            # invalid/escaped/missing — a None thumbnail, not the error dict
+            # (the profile shows a placeholder tile, never a broken bridge).
+            return {"ok": True, "id": record.id, "thumbnail": None}
+        abs_path, rel = resolved
+        px = _coerce_thumb_px(max_px)
+        try:
+            from PIL import Image
+        except Exception:  # noqa: BLE001 — optional on a bare sandbox
+            return {"ok": True, "id": record.id, "thumbnail": None}
+        try:
+            with Image.open(abs_path) as im:
+                im = im.convert("RGB")  # flattens matted RGBA over black; the
+                #                          compositing studio previews alpha
+                im.thumbnail((px, px))
+                buf = io.BytesIO()
+                im.save(buf, "JPEG", quality=82)
+        except Exception:  # noqa: BLE001 — undecodable/oversized/DecompressionBomb
+            return {"ok": True, "id": record.id, "thumbnail": None}
+        data = base64.b64encode(buf.getvalue()).decode("ascii")
+        return {"ok": True, "id": record.id, "path": rel,
+                "thumbnail": "data:image/jpeg;base64," + data}
+
     def background_status(self, scene_id: object) -> dict:
         """A scene's generated backgrounds (frame list + existence) + Layer-2
         readiness. No GPU — a status probe for the UI."""
@@ -2384,7 +2575,7 @@ class ImageService:
             return {"ok": False, "kind": missing,
                     "error": self._cull_missing_message(missing)}
 
-        trigger = self._lora_trigger(record)
+        trigger = self._generation_trigger(record)
         pending = self._catalog_cell_prompts(record, [cell], trigger,
                                              context_prefix="image.cache")
         if not pending:
@@ -2514,6 +2705,7 @@ class ImageService:
         except Exception:  # noqa: BLE001 — un-failable by contract
             pass
 
+        self.refresh_footprint(record.id)  # 5.5e: cache bytes grew (net of evict)
         return {"ok": True, "id": record.id, "cached": False,
                 "source": "generated", "frame_id": entry.frame_id,
                 "path": entry.path, "abs_path": str(final),
@@ -2561,6 +2753,35 @@ class ImageService:
                 "bytes": manifest.total_bytes(), "stale": manifest.stale,
                 "states": states, "matte_ready": ready, "matte_missing": missing}
 
+    def catalog_state_space(self, character_id: object) -> dict:
+        """The id-triple space the 5.5d on-demand posing picker offers: the
+        editable expression + pose states (``data/catalog_states.json``, §15)
+        and the character's own wardrobe outfits (plus the as-is look). Ids
+        only — the picker never sends prompt text; every fragment is resolved
+        server-side at generation (the on-demand injection-safety stance,
+        §15). No models, no GPU."""
+        record = self._load_record(character_id)
+        if isinstance(record, dict):
+            return record
+        expressions, poses = catalog_mod.load_catalog_states()
+        catalog = self._catalog()
+        outfit_group = catalog.get(catalog_mod.OUTFIT_GROUP)
+        outfits = []
+        for oid, _prompt in catalog_mod.record_outfits(record, catalog):
+            if oid == catalog_mod.ASIS_OUTFIT:
+                label = "As defined"
+            else:
+                opt = outfit_group.get_option(oid) if outfit_group else None
+                label = opt.label if opt else _humanize(oid)
+            outfits.append({"id": oid, "label": label})
+        return {
+            "ok": True, "id": record.id,
+            "expressions": [{"id": s.id, "label": _humanize(s.id)}
+                            for s in expressions],
+            "poses": [{"id": s.id, "label": _humanize(s.id)} for s in poses],
+            "outfits": outfits,
+        }
+
     def clear_cache(self, character_id: object) -> dict:
         """Delete the on-demand cache (frames + mattes + manifest). Evicted
         states simply regenerate on demand if asked for again (§14)."""
@@ -2572,6 +2793,7 @@ class ImageService:
         except OSError as exc:
             return {"ok": False, "kind": "io",
                     "error": f"could not clear the cache: {exc}"}
+        self.refresh_footprint(record.id)  # 5.5e: cache bytes went to zero
         self._audit.log("cache_cleared", character_id=record.id)
         return {"ok": True, "id": record.id, "removed": removed}
 
@@ -2647,6 +2869,31 @@ class ImageService:
                 "freed_bytes": freed, "cap_bytes": cap,
                 "cache_bytes": total - freed,
                 "remaining": len(manifest.entries)}
+
+    # -- footprint caching (5.5e) -------------------------------------------------
+
+    def refresh_footprint(self, character_id: object) -> None:
+        """Recompute the on-disk footprint (§14) and cache it into the record's
+        ``IdentityAnchor`` so ``library_list`` reads a stored value instead of
+        walking every character's tree on each refresh (5.5e — ~10k stat()s per
+        refresh at 200 characters bought nothing). Called after each artifact
+        mutation that changes the LoRA / catalog / cache bytes, and from the
+        reconcile sweep ("recompute on demand + at reconcile").
+
+        Re-loads the record FRESH (only the footprint field is overwritten) so a
+        long-running image job — the catalog run is 287 s, the train 31 min —
+        can never clobber a concurrent creator edit with its own stale copy.
+        Never raises and does NOT ``touch()``: a derived-artifact change is not
+        a record edit and must not reorder the "recently updated" view, and a
+        blocked/corrupt/locked record is simply the next reconcile's problem."""
+        record = self._load_record(character_id)
+        if isinstance(record, dict):
+            return
+        try:
+            record.identity.footprint = self._store.measure_footprint(record.id)
+            self._store.save(record)
+        except OSError:
+            pass
 
     # -- on-demand cache internals ------------------------------------------------
 
@@ -3220,8 +3467,15 @@ def build_image_service(
     builder_store: BuilderStore | None = None,
     scene_catalog_provider: Callable[[], OptionCatalog] | None = None,
 ) -> ImageService:
+    # Wrap the engine so the byte-frozen per-frame loops become cooperatively
+    # cancellable + progress-reporting under a running job (Stage 5.5a). The
+    # proxy is a pure pass-through when no job is active (current_token() is
+    # None) — the synchronous / test / hardware-harness path is byte-identical.
+    from ..jobs import CancellableEngine
+
     return ImageService(
         store, settings, audit, catalog_provider=catalog_provider,
+        engine=CancellableEngine(ImageEngine(settings)),
         builder_store=builder_store,
         scene_catalog_provider=scene_catalog_provider,
     )
