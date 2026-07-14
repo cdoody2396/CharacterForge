@@ -1,18 +1,18 @@
 {
-  "_comment": "Stage-3e seed-catalog states (DECISIONS §7). The core matrix is expressions x poses x the character's wardrobe. Editable data: each entry is an id + a booru-style prompt fragment appended to the identity prompt. Neutral/adult by design; every fragment still passes the Layer-1 prompt gate at assembly.",
+  "_comment": "Stage-3e seed-catalog states (DECISIONS §7). The core matrix is expressions x poses x the character's wardrobe. Editable data: each entry is an id + a booru-style prompt fragment appended to the identity prompt. Fragments are canonical Danbooru tags (5.5g 3g audit — the checkpoint is Illustrious-family and booru-conditioned). Neutral/adult by design; every fragment still passes the Layer-1 prompt gate at assembly.",
   "expressions": [
-    { "id": "neutral", "prompt": "neutral expression" },
-    { "id": "smile", "prompt": "gentle smile" },
-    { "id": "laugh", "prompt": "laughing, happy" },
-    { "id": "serious", "prompt": "serious expression" },
-    { "id": "surprised", "prompt": "surprised expression" },
-    { "id": "sultry", "prompt": "sultry look, half-lidded eyes" }
+    { "id": "neutral", "prompt": "expressionless" },
+    { "id": "smile", "prompt": "smile" },
+    { "id": "laugh", "prompt": "laughing" },
+    { "id": "serious", "prompt": "serious" },
+    { "id": "surprised", "prompt": "surprised" },
+    { "id": "sultry", "prompt": "seductive smile, half-lidded eyes" }
   ],
   "poses": [
-    { "id": "portrait", "prompt": "upper body portrait, facing viewer" },
+    { "id": "portrait", "prompt": "upper body, portrait, facing viewer" },
     { "id": "standing", "prompt": "full body, standing" },
     { "id": "sitting", "prompt": "sitting" },
     { "id": "three_quarter", "prompt": "three-quarter view" },
-    { "id": "over_shoulder", "prompt": "looking over shoulder" }
+    { "id": "over_shoulder", "prompt": "looking back" }
   ]
 }

@@ -141,6 +141,51 @@ def test_embed_exception_is_rejected_error():
     assert score.status == STATUS_REJECTED_ERROR
 
 
+def test_real_classifier_recall_against_the_minor_tag_file(monkeypatch):
+    """5.5g 3c anchor for the minor-appearance RECALL path: drive the REAL
+    ``_ImgutilsContentClassifier`` matching logic against the REAL
+    ``minor_coded_tags.txt`` with a faked WD14 tagger, so the recall gate is
+    structurally exercised on the sandbox (the live WD14 model is [HARDWARE]).
+    A minor-coded tag at/above the confidence threshold MUST block."""
+    import sys
+    import types
+
+    from app.imagegen.cull import (
+        MINOR_TAG_CONFIDENCE,
+        _ImgutilsContentClassifier,
+        _load_minor_tags,
+    )
+
+    minor_tags = _load_minor_tags()  # the real, shipped block set
+    assert "loli" in minor_tags      # the data file is present + loaded
+
+    tagging = types.ModuleType("imgutils.tagging")
+    result = {"rating": "general", "features": {}, "chars": {}}
+
+    def _fake_get_wd14_tags(path):  # WD14's (rating, features, chars) shape
+        return result["rating"], result["features"], result["chars"]
+
+    tagging.get_wd14_tags = _fake_get_wd14_tags
+    pkg = types.ModuleType("imgutils")
+    monkeypatch.setitem(sys.modules, "imgutils", pkg)
+    monkeypatch.setitem(sys.modules, "imgutils.tagging", tagging)
+
+    cls = _ImgutilsContentClassifier(minor_tags)
+
+    # (1) a minor-coded tag ABOVE threshold -> caught (recall).
+    result["features"] = {"1girl": 0.99, "loli": 0.9}
+    v = cls.classify("x.png")
+    assert v.blocked and v.category == "minors" and v.matched == "loli"
+
+    # (2) the SAME tag BELOW threshold -> not blocked (the bias-to-block knob).
+    result["features"] = {"loli": MINOR_TAG_CONFIDENCE - 0.01}
+    assert not cls.classify("x.png").blocked
+
+    # (3) a clean adult frame -> not blocked (no false positive here).
+    result["features"] = {"1girl": 0.99, "solo": 0.98}
+    assert not cls.classify("x.png").blocked
+
+
 def test_no_face_rejected():
     tk = toolkit(FaceReading(found=False, face_count=0))
     assert score_candidate(tk, tk.ref_reading, "c", "x", CFG).status == \

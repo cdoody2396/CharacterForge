@@ -99,6 +99,10 @@ class MatteConfig:
     feather_px: int = 0             # Gaussian re-soften after erode; 0 = off
     coverage_min: float = 0.02      # degenerate floor (model found no subject)
     coverage_max: float = 0.98      # degenerate ceiling (model keyed nothing out)
+    # 5.5g escalation seam: an explicit model file to build the session from.
+    # None (every primary config) => matting_model_path(settings) unchanged;
+    # set only on the escalation config so the factory loads the BiRefNet .onnx.
+    model_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -217,6 +221,68 @@ def coerce_matte_config(settings: Settings) -> MatteConfig:
     )
 
 
+# -- 5.5g close-up-bust escalation (3f residual) ------------------------------
+
+DEFAULT_ESCALATION_VARIANT = "birefnet"
+DEFAULT_ESCALATION_COVERAGE = 0.85  # clean ceiling (~0.28) < this < coverage_max
+
+
+@dataclass(frozen=True)
+class EscalationConfig:
+    """The second-model re-matte config for tight busts. ``config`` shares the
+    primary's gate/knobs but points at the escalation model + variant; a frame
+    whose PRIMARY solid-alpha coverage >= ``coverage`` is re-matted with it."""
+
+    config: MatteConfig
+    coverage: float
+
+
+def matting_escalation_model_path(settings: Settings) -> Path | None:
+    return _resolve(settings.get("models.image.matting_escalation_model_path"))
+
+
+def coerce_escalation_config(
+    settings: Settings, primary: MatteConfig
+) -> EscalationConfig | None:
+    """Build the escalation config from image_gen.matting.escalation_* + the
+    escalation model path, coerced defensively (bad hand-edit -> default).
+
+    Returns ``None`` **only** when the escalation model path is UNSET — that is
+    the byte-for-byte no-op guarantee (no second session, no factory call, no
+    manifest keys). A path that is SET but points at a missing file still yields
+    a config; it degrades to disabled at build time in the service, so "unset"
+    (feature off) stays distinguishable from "misconfigured" (feature on, model
+    absent). The escalation inherits the primary's gate + halo knobs so the
+    escalated result is judged by the SAME band."""
+    path = matting_escalation_model_path(settings)
+    if path is None:
+        return None
+
+    raw_variant = settings.get("image_gen.matting.escalation_variant",
+                               DEFAULT_ESCALATION_VARIANT)
+    variant = (raw_variant if (isinstance(raw_variant, str)
+                               and raw_variant in VARIANTS)
+               else DEFAULT_ESCALATION_VARIANT)
+    try:
+        cov = float(settings.get("image_gen.matting.escalation_coverage",
+                                 DEFAULT_ESCALATION_COVERAGE))
+    except (TypeError, ValueError, OverflowError):
+        cov = DEFAULT_ESCALATION_COVERAGE
+    if not math.isfinite(cov):
+        cov = DEFAULT_ESCALATION_COVERAGE
+    cov = min(1.0, max(0.0, cov))
+
+    esc = MatteConfig(
+        variant=variant,
+        erode_px=primary.erode_px,
+        feather_px=primary.feather_px,
+        coverage_min=primary.coverage_min,
+        coverage_max=primary.coverage_max,
+        model_path=str(path),
+    )
+    return EscalationConfig(config=esc, coverage=cov)
+
+
 # ===========================================================================
 # [HARDWARE] real backend — every heavy import is lazy and inside a method,
 # so this module imports clean on the GPU-less sandbox. Pre/post reproduces
@@ -302,8 +368,13 @@ def _default_matte_factory(settings: Settings, config: MatteConfig) -> MatteTool
 
     import onnxruntime as ort
 
+    # 5.5g seam: an escalation config carries an explicit model_path (the
+    # BiRefNet .onnx); every primary config leaves it None -> the primary
+    # matting_model_path, byte-for-byte unchanged.
+    model_path = (_resolve(config.model_path) if config.model_path
+                  else matting_model_path(settings))
     session = ort.InferenceSession(
-        str(matting_model_path(settings)), providers=onnx_providers(settings)
+        str(model_path), providers=onnx_providers(settings)
     )
     matter = _OnnxMatter(session, VARIANTS[config.variant], config)
     classifier = _ImgutilsContentClassifier(_load_minor_tags())

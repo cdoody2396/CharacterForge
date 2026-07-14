@@ -67,6 +67,7 @@ from .lora import (
     preflight_train,
 )
 from .matte import (
+    EscalationConfig,
     MatteConfig,
     MatteFactory,
     MatteReading,
@@ -75,8 +76,10 @@ from .matte import (
     Matter,
     VARIANTS,
     VariantSpec,
+    coerce_escalation_config,
     coerce_matte_config,
     evaluate_matte,
+    matting_escalation_model_path,
     preflight_matte,
 )
 from .prompt import AssembledPrompt, PromptAssembler, PromptBlocked, PromptPiece
@@ -139,6 +142,7 @@ __all__ = [
     "DEFAULT_LORA_SCALE",
     "MAX_LORA_SCALE",
     # Stage 3f — matting / keyable output
+    "EscalationConfig",
     "Matter",
     "MatteConfig",
     "MatteFactory",
@@ -147,8 +151,10 @@ __all__ = [
     "MatteUnavailable",
     "VariantSpec",
     "VARIANTS",
+    "coerce_escalation_config",
     "coerce_matte_config",
     "evaluate_matte",
+    "matting_escalation_model_path",
     "preflight_matte",
     # Stage 3g — on-demand generation + cache
     "STATE_KEYS",

@@ -933,6 +933,7 @@ def test_engine_status_includes_generation_settings(service, settings):
     assert status["generation"] == {
         "width": 832, "height": 1216, "steps": 28,
         "cfg_scale": 5.5, "sampler": "euler_a", "ip_adapter_scale": 0.55,
+        "chunked": True,  # 5.5b: the long-prompt encoding knob, default on
     }
 
 
@@ -2919,7 +2920,7 @@ def test_on_demand_generates_culls_mattes_and_caches(
     # the LoRA-steered cell prompt = trigger + the state fragments
     trigger = ImageService._lora_trigger(record)  # no manifest -> derived fallback
     reqs = [r for b in fake_engine.factory.backends for r in b.requests]
-    assert any(trigger in r.positive and "gentle smile" in r.positive
+    assert any(trigger in r.positive and "smile" in r.positive
                and "sitting" in r.positive for r in reqs)
     # VRAM: slot free; the cull toolkit built AFTER the image unload; the
     # fresh frame was matted WITHOUT a redundant classify (same-run pixels)

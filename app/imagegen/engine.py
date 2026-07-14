@@ -244,13 +244,32 @@ def _comma_windows(tokenizer: Any, text: str,
     return windows or [""]
 
 
-def encode_chunked(pipe: Any, torch: Any, positive: str, negative: str) -> dict:
+def encode_chunked(pipe: Any, torch: Any, positive: str, negative: str,
+                   chunked: bool = True) -> dict:
     """Long-prompt SDXL encoding: window each prompt on commas, ``encode_prompt``
     each window, concatenate along the sequence axis. Returns the four embed
     tensors as pipe kwargs (``prompt_embeds`` / ``negative_prompt_embeds`` /
     ``pooled_prompt_embeds`` / ``negative_pooled_prompt_embeds``) to pass in
     place of the ``prompt`` / ``negative_prompt`` strings. A short prompt yields
-    one window — behaviourally identical to the old string path."""
+    one window — behaviourally identical to the old string path.
+
+    ``chunked=False`` (5.5b A/B baseline, driven by image_gen.encode_chunked)
+    is the pre-5.5b path: a SINGLE ``encode_prompt`` over the raw strings, which
+    diffusers truncates at 77 tokens — the shape the truncation table measured.
+    Returns the same four-embed dict either way, so callers are unchanged."""
+    if not chunked:
+        pe, ne, ppe, npe = pipe.encode_prompt(
+            prompt=positive,
+            negative_prompt=negative,
+            num_images_per_prompt=1,
+            do_classifier_free_guidance=True,
+        )
+        return {
+            "prompt_embeds": pe,
+            "negative_prompt_embeds": ne,
+            "pooled_prompt_embeds": ppe,
+            "negative_pooled_prompt_embeds": npe,
+        }
     pos_windows = _comma_windows(pipe.tokenizer, positive)
     neg_windows = _comma_windows(pipe.tokenizer, negative)
     k = max(len(pos_windows), len(neg_windows))
@@ -313,6 +332,10 @@ class GenerationRequest:
     # None unless the request runs the LoRA/catalog (3e) backend; a float in
     # [0, MAX_LORA_SCALE] applied to the fused identity LoRA at inference.
     lora_scale: float | None = None
+    # 5.5b: True (default) = chunked long-prompt encoding (carries a >77-token
+    # prompt in full); False = the pre-5.5b single-encode path (truncates at
+    # 77), the A/B baseline. Byte-identical to before when True.
+    chunked: bool = True
 
     def validate(self) -> None:
         for name, dim in (("width", self.width), ("height", self.height)):
@@ -467,7 +490,8 @@ class _DiffusersSDXLBackend:
         generator = torch.Generator("cuda").manual_seed(request.seed)
         with torch.inference_mode():
             embeds = encode_chunked(self._pipe, torch,
-                                    request.positive, request.negative)
+                                    request.positive, request.negative,
+                                    chunked=request.chunked)
             out = self._pipe(
                 **embeds,
                 width=request.width,
@@ -616,7 +640,8 @@ class _DiffusersIPAdapterSDXLBackend:
         generator = torch.Generator("cuda").manual_seed(request.seed)
         with torch.inference_mode():
             embeds = encode_chunked(self._pipe, torch,
-                                    request.positive, request.negative)
+                                    request.positive, request.negative,
+                                    chunked=request.chunked)
             out = self._pipe(
                 **embeds,
                 width=request.width,
@@ -740,7 +765,8 @@ class _DiffusersLoraSDXLBackend:
         generator = torch.Generator("cuda").manual_seed(request.seed)
         with torch.inference_mode():
             embeds = encode_chunked(self._pipe, torch,
-                                    request.positive, request.negative)
+                                    request.positive, request.negative,
+                                    chunked=request.chunked)
             out = self._pipe(
                 **embeds,
                 width=request.width,

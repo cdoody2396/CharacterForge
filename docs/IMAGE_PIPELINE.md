@@ -744,6 +744,44 @@ isnet-anime `6f184e756bb3bd901c8849220a83e38e`, isnet-general-use
 `7a35a0141cbbc80de11d9c9a28f52697`. No non-commercial restriction on any
 (unlike inswapper/buffalo_l).
 
+### Close-up-bust escalation (5.5g — the 3f residual, un-parked)
+
+`isnet_anime` leaves a **translucent full-frame pane** on tight close-up busts:
+the character fills 85–94 % of the frame, so there is almost no background to
+key out, and the per-image min-max stretch holds that near-empty "background"
+at high alpha. (Measured on the RTX 4070 target: wide/full-body frames matte
+cleanly at ~0.18–0.28 solid-alpha coverage; busts sit at ~0.93–0.996.) 6e's
+avatar **is** a bust, so this matters.
+
+The fix is a **per-frame re-matte with a second (BiRefNet) model, routed by the
+coverage the gate already computes** — no new architecture (BiRefNet is the
+existing constants-only `birefnet` variant). Configure a second, user-placed
+model:
+
+```
+models.image.matting_escalation_model_path -> a BiRefNet .onnx  (None = OFF)
+image_gen.matting.escalation_variant       -> "birefnet" (any known variant)
+image_gen.matting.escalation_coverage      -> 0.85  (escalate when primary >= this)
+```
+
+Policy (`_apply_escalation` + `_MatteEscalation`): after the primary matte, a
+frame whose **primary solid-alpha coverage ≥ `escalation_coverage`** is
+re-matted with the escalation model; the escalated cutout is **promoted only if
+it passes the SAME degenerate gate AND keys strictly more out (lower coverage)
+than the primary** — the never-worse rail, so escalation can never ship a matte
+worse than the primary. `escalation_coverage = 0.85` sits above the clean-frame
+ceiling (~0.28) and below `coverage_max` (0.98), so in-band busts (0.93–0.98)
+that currently *pass* the gate still get the BiRefNet re-matte.
+
+**Byte-for-byte no-op when unset:** with no escalation model path,
+`coerce_escalation_config` returns `None` — no second session, no extra factory
+call, no manifest keys. The escalation toolkit is built **lazily** (on the first
+frame that crosses the threshold, so a wide-frame-only catalog never loads the
+~973 MB model) and applies to all matte paths (`matte_catalog`, on-demand cache,
+heal). A missing/corrupt escalation model **degrades to disabled** (the primary
+matte is used) — it never raises. When on, `manifest.matting` gains
+`escalation_variant` / `escalation_model` (basename only) / `escalated` (count).
+
 ### The recipe (`app/imagegen/matte.py`, `_OnnxMatter`)
 
 One shared codepath; the per-variant constants (verified verbatim from rembg

@@ -144,8 +144,8 @@ def test_resolve_cell_happy_path():
     assert isinstance(cell, CatalogCell)
     assert cell.state() == {"expression": "smile", "pose": "sitting",
                             "outfit": "casual"}
-    # prompts come from the DATA, never the caller
-    assert cell.expression_prompt == "gentle smile"
+    # prompts come from the DATA, never the caller (5.5g canonical booru tags)
+    assert cell.expression_prompt == "smile"
     assert cell.pose_prompt == "sitting"
     assert cell.outfit_prompt  # from the option catalog
 
@@ -217,5 +217,25 @@ def test_assembler_exclude_lead_extra():
     assert "casual clothing" not in pos and "formal attire" not in pos  # outfit excluded
     # trigger leads the identity groups (after the anchors)
     assert pos.index("cfidabc123") < pos.index("elf, pointed ears")
+
+
+def test_every_shipped_state_fragment_passes_layer1_at_assembly():
+    # 5.5g: the canonical-tag rewrite of catalog_states.json is neutral/adult by
+    # design, and the file claims every fragment still passes the Layer-1 prompt
+    # gate at assembly. Assert it directly, so a future drop-in edit that adds a
+    # blocked fragment fails here rather than silently at generation time.
+    asm = PromptAssembler()
+    catalog = load_option_catalog()
+    record = make_record()
+    expressions, poses = load_catalog_states()
+    for kind, states in (("expression", expressions), ("pose", poses)):
+        for st in states:
+            if not st.prompt:
+                continue
+            ap = asm.assemble(record, catalog,
+                              extra=((f"state.{kind}.{st.id}", st.prompt),))
+            # each comma-token of the fragment survives the gate verbatim
+            for token in (t.strip() for t in st.prompt.split(",")):
+                assert token and token in ap.positive, (kind, st.id, token)
     # and a normal assemble (no exclude) DOES include the wardrobe
     assert "casual clothing" in asm.assemble(record, catalog).positive

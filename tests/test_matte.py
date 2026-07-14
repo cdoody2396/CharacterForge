@@ -14,14 +14,17 @@ from app.imagegen import ImageService
 from app.imagegen.cull import ContentVerdict
 from app.imagegen.matte import (
     MASK_EPSILON,
+    EscalationConfig,
     MatteConfig,
     MatteReading,
     MatteToolkit,
     MatteUnavailable,
     VARIANTS,
     VariantSpec,
+    coerce_escalation_config,
     coerce_matte_config,
     evaluate_matte,
+    matting_escalation_model_path,
     matting_model_path,
     preflight_matte,
 )
@@ -82,8 +85,10 @@ class FakeMatteFactory:
         self.raise_exc = raise_exc
         self.block_all = block_all
         self._order: dict = {}
-        self.built = 0
-        self.matte_calls = 0
+        self.built = 0            # primary toolkits built (config.model_path None)
+        self.esc_built = 0        # escalation toolkits built (config.model_path set)
+        self.matte_calls = 0      # primary matte() calls
+        self.esc_matte_calls = 0  # escalation matte() calls
         self.classify_calls = 0
         self.configs: list = []
         self.side_effect = None  # callable(src, out) run inside matte()
@@ -100,13 +105,21 @@ class FakeMatteFactory:
             raise MatteUnavailable(self.raise_kind)
         if self.raise_exc is not None:
             raise self.raise_exc
-        self.built += 1
+        # The escalation config is the ONLY one that carries model_path (5.5g).
+        is_esc = getattr(config, "model_path", None) is not None
+        if is_esc:
+            self.esc_built += 1
+        else:
+            self.built += 1
         self.configs.append(config)
         factory = self
 
         class _M:
             def matte(self, src, out):
-                factory.matte_calls += 1
+                if is_esc:
+                    factory.esc_matte_calls += 1
+                else:
+                    factory.matte_calls += 1
                 if factory.side_effect is not None:
                     factory.side_effect(src, out)
                 o = factory._outcome(src)
@@ -117,6 +130,13 @@ class FakeMatteFactory:
                     # service must delete the written tmp on the raise path
                     Path(out).write_bytes(b"PARTIAL")
                     raise RuntimeError("matte boom late")
+                if is_esc:
+                    # the escalation re-matte keys the bust better: its own
+                    # coverage + distinguishable bytes so promotion is assertable
+                    Path(out).write_bytes(b"RGBA-ESC")
+                    cov = o.get("esc_coverage", o.get("coverage", 0.5))
+                    return MatteReading(coverage=cov,
+                                        mean_alpha=o.get("mean_alpha", 0.4))
                 Path(out).write_bytes(b"RGBA")
                 return MatteReading(coverage=o.get("coverage", 0.5),
                                     mean_alpha=o.get("mean_alpha", 0.4))
@@ -159,6 +179,18 @@ def matte_service(creator, settings, audit, factory) -> ImageService:
         catalog_provider=lambda: creator.catalog,
         matte_factory=factory,
     )
+
+
+def place_escalation(settings, tmp_path, *, present=True):
+    """Configure the 5.5g escalation model. present=True places a fake
+    birefnet .onnx; present=False sets a path to a NONEXISTENT file (the
+    misconfigured-but-on case that degrades to disabled at build time)."""
+    model = tmp_path / "models" / "birefnet.onnx"
+    if present:
+        model.parent.mkdir(parents=True, exist_ok=True)
+        model.write_bytes(b"\0" * 8)
+    settings.set("models.image.matting_escalation_model_path", str(model))
+    return model
 
 
 # -- pure logic ----------------------------------------------------------------
@@ -261,6 +293,60 @@ def test_coerce_matte_config_clamps_valid_edges(tmp_path):
     cfg = coerce_matte_config(Settings(path))
     assert (cfg.coverage_min, cfg.coverage_max) == (0.0, 1.0)
     assert cfg.erode_px == 2  # float -> int
+
+
+def test_coerce_escalation_config_unset_and_degrades(tmp_path):
+    primary = MatteConfig(erode_px=3, feather_px=2,
+                          coverage_min=0.05, coverage_max=0.9)
+    path = tmp_path / "s.json"
+
+    # UNSET escalation model path -> None (the byte-for-byte no-op guarantee).
+    path.write_text("{}", encoding="utf-8")
+    assert coerce_escalation_config(Settings(path), primary) is None
+
+    # A placed model path -> a config that inherits the primary's band/knobs.
+    model = tmp_path / "birefnet.onnx"
+    model.write_bytes(b"\0")
+    path.write_text(json.dumps({
+        "models": {"image": {"matting_escalation_model_path": str(model)}},
+    }), encoding="utf-8")
+    ec = coerce_escalation_config(Settings(path), primary)
+    assert isinstance(ec, EscalationConfig)
+    assert ec.coverage == 0.85  # default threshold
+    assert ec.config.variant == "birefnet"
+    assert ec.config.model_path == str(model.resolve())
+    # inherits the primary's gate + halo knobs (judged by the SAME band)
+    assert (ec.config.erode_px, ec.config.feather_px) == (3, 2)
+    assert (ec.config.coverage_min, ec.config.coverage_max) == (0.05, 0.9)
+
+    # junk hand-edits degrade to defaults, never raise.
+    path.write_text(json.dumps({
+        "models": {"image": {"matting_escalation_model_path": str(model)}},
+        "image_gen": {"matting": {
+            "escalation_variant": "lol", "escalation_coverage": "NaN"}},
+    }), encoding="utf-8")
+    ec = coerce_escalation_config(Settings(path), primary)
+    assert ec.config.variant == "birefnet" and ec.coverage == 0.85
+
+    # a >1 coverage clamps; Infinity -> default.
+    path.write_text(json.dumps({
+        "models": {"image": {"matting_escalation_model_path": str(model)}},
+        "image_gen": {"matting": {"escalation_coverage": 1.5}},
+    }), encoding="utf-8")
+    assert coerce_escalation_config(Settings(path), primary).coverage == 1.0
+    path.write_text(
+        '{"models": {"image": {"matting_escalation_model_path": "%s"}},'
+        ' "image_gen": {"matting": {"escalation_coverage": Infinity}}}'
+        % str(model).replace("\\", "\\\\"), encoding="utf-8")
+    assert coerce_escalation_config(Settings(path), primary).coverage == 0.85
+
+    # SET but MISSING file still yields a config (unset != misconfigured);
+    # it degrades to disabled at build time in the service.
+    path.write_text(json.dumps({
+        "models": {"image": {
+            "matting_escalation_model_path": str(tmp_path / "gone.onnx")}},
+    }), encoding="utf-8")
+    assert coerce_escalation_config(Settings(path), primary) is not None
 
 
 def test_preflight_matte_kinds(tmp_path, settings, matte_models):
@@ -509,6 +595,133 @@ def test_matte_catalog_force_failure_keeps_prior_matte(creator, settings, audit,
     assert any(r["status"] == "matte_empty" for r in res["results"])
     assert prior.read_bytes() == prior_bytes
     assert creator.store.load_catalog(record.id).entries[0].matted_path
+
+
+# -- 5.5g close-up-bust escalation (3f residual) ------------------------------
+
+
+def _matted_bytes(creator, record, entry_idx=0):
+    manifest = creator.store.load_catalog(record.id)
+    entry = manifest.entries[entry_idx]
+    return (creator.store.char_dir(record.id) / entry.matted_path).read_bytes()
+
+
+def test_matte_escalation_promotes_lower_coverage_birefnet(
+        creator, settings, audit, matte_models, tmp_path):
+    # A bust: primary keys almost nothing out (0.95); BiRefNet keys it well
+    # (0.30). The escalated, lower-coverage cutout is promoted.
+    place_escalation(settings, tmp_path)
+    factory = FakeMatteFactory(outcomes=[{"coverage": 0.95, "esc_coverage": 0.30}])
+    service = matte_service(creator, settings, audit, factory)
+    record = seeded_catalog(creator, n=1)
+
+    res = service.matte_catalog(record.id)
+    assert res["ok"] is True and res["matted"] == 1
+    assert factory.esc_built == 1 and factory.esc_matte_calls == 1
+    assert _matted_bytes(creator, record) == b"RGBA-ESC"      # escalated pixels
+    assert res["results"][0]["coverage"] == 0.30              # escalated reading
+    m = creator.store.load_catalog(record.id).matting
+    assert m["escalated"] == 1 and m["escalation_variant"] == "birefnet"
+    assert m["escalation_model"] == "birefnet.onnx"           # basename only
+    assert not list(creator.store.matted_dir(record.id).glob("*.tmp"))
+
+
+def test_matte_escalation_rescues_matte_full_frame(
+        creator, settings, audit, matte_models, tmp_path):
+    # Primary 0.995 would be matte_full (keyed nothing out) today; the BiRefNet
+    # re-matte at 0.22 rescues it into a usable, promoted cutout.
+    place_escalation(settings, tmp_path)
+    factory = FakeMatteFactory(outcomes=[{"coverage": 0.995, "esc_coverage": 0.22}])
+    service = matte_service(creator, settings, audit, factory)
+    record = seeded_catalog(creator, n=1)
+
+    res = service.matte_catalog(record.id)
+    assert res["ok"] is True and res["matted"] == 1
+    assert _matted_bytes(creator, record) == b"RGBA-ESC"
+
+
+def test_matte_escalation_keeps_primary_when_birefnet_not_better(
+        creator, settings, audit, matte_models, tmp_path):
+    place_escalation(settings, tmp_path)
+    # (a) escalated coverage is NOT strictly lower -> keep primary.
+    factory = FakeMatteFactory(outcomes=[{"coverage": 0.90, "esc_coverage": 0.92}])
+    service = matte_service(creator, settings, audit, factory)
+    record = seeded_catalog(creator, n=1)
+    res = service.matte_catalog(record.id)
+    assert res["ok"] is True and res["matted"] == 1
+    assert _matted_bytes(creator, record) == b"RGBA"          # primary kept
+    assert res["results"][0]["coverage"] == 0.90
+    m = creator.store.load_catalog(record.id).matting
+    assert m["escalated"] == 0
+    assert not list(creator.store.matted_dir(record.id).glob("*.tmp"))
+
+    # (b) escalated result FAILS the gate (empty) -> keep primary.
+    factory2 = FakeMatteFactory(outcomes=[{"coverage": 0.90, "esc_coverage": 0.0}])
+    service2 = matte_service(creator, settings, audit, factory2)
+    record2 = seeded_catalog(creator, n=1)
+    res2 = service2.matte_catalog(record2.id)
+    assert res2["ok"] is True and res2["matted"] == 1
+    assert _matted_bytes(creator, record2) == b"RGBA"
+    assert creator.store.load_catalog(record2.id).matting["escalated"] == 0
+
+
+def test_matte_escalation_below_threshold_skips(
+        creator, settings, audit, matte_models, tmp_path):
+    # A clean wide frame (0.30 < 0.85) never triggers the second model.
+    place_escalation(settings, tmp_path)
+    factory = FakeMatteFactory(outcomes=[{"coverage": 0.30, "esc_coverage": 0.10}])
+    service = matte_service(creator, settings, audit, factory)
+    record = seeded_catalog(creator, n=1)
+    res = service.matte_catalog(record.id)
+    assert res["ok"] is True and res["matted"] == 1
+    assert factory.esc_built == 0 and factory.esc_matte_calls == 0
+    assert _matted_bytes(creator, record) == b"RGBA"
+
+
+def test_matte_escalation_not_configured_no_second_build(
+        creator, settings, audit, matte_models):
+    # No escalation model path set: byte-for-byte the pre-5.5g behavior even on
+    # a bust-coverage frame — no second toolkit, no new manifest keys.
+    factory = FakeMatteFactory(outcomes=[{"coverage": 0.95, "esc_coverage": 0.30}])
+    service = matte_service(creator, settings, audit, factory)
+    record = seeded_catalog(creator, n=1)
+    res = service.matte_catalog(record.id)
+    assert res["ok"] is True and res["matted"] == 1
+    assert factory.built == 1 and factory.esc_built == 0
+    assert _matted_bytes(creator, record) == b"RGBA"
+    m = creator.store.load_catalog(record.id).matting
+    assert "escalated" not in m and "escalation_variant" not in m
+
+
+def test_matte_escalation_missing_model_degrades(
+        creator, settings, audit, matte_models, tmp_path):
+    # Path SET but file ABSENT: escalation disabled at build time, run still ok,
+    # no crash, no leftover tmp, primary cutout shipped.
+    place_escalation(settings, tmp_path, present=False)
+    factory = FakeMatteFactory(outcomes=[{"coverage": 0.95, "esc_coverage": 0.30}])
+    service = matte_service(creator, settings, audit, factory)
+    record = seeded_catalog(creator, n=1)
+    res = service.matte_catalog(record.id)
+    assert res["ok"] is True and res["matted"] == 1
+    assert factory.esc_built == 0                 # .is_file() guard disabled it
+    assert _matted_bytes(creator, record) == b"RGBA"   # 0.95 < 0.98 -> matted
+    assert not list(creator.store.matted_dir(record.id).glob("*.tmp"))
+
+
+def test_matte_escalation_lazy_build_once(
+        creator, settings, audit, matte_models, tmp_path):
+    # Two busts: the escalation toolkit is built ONCE and reused across frames.
+    place_escalation(settings, tmp_path)
+    factory = FakeMatteFactory(outcomes=[
+        {"coverage": 0.95, "esc_coverage": 0.30},
+        {"coverage": 0.94, "esc_coverage": 0.28},
+    ])
+    service = matte_service(creator, settings, audit, factory)
+    record = seeded_catalog(creator, n=2)
+    res = service.matte_catalog(record.id)
+    assert res["ok"] is True and res["matted"] == 2
+    assert factory.esc_built == 1 and factory.esc_matte_calls == 2
+    assert creator.store.load_catalog(record.id).matting["escalated"] == 2
 
 
 def test_matte_catalog_backend_exception_and_all_failed(creator, settings, audit,

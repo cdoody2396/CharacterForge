@@ -190,6 +190,53 @@ def _humanize(value: object) -> str:
         or str(value)
 
 
+class _MatteEscalation:
+    """Owns the escalation (BiRefNet) matte toolkit for ONE matte run (5.5g,
+    3f residual). Built LAZILY on the first frame that crosses the escalation
+    coverage threshold, so a wide-frame-only catalog never loads the ~973 MB
+    model. A missing/corrupt escalation model disables escalation for the run
+    (the primary matte is used) — it never raises. Tracks how many frames were
+    escalated for the manifest provenance."""
+
+    def __init__(self, factory, settings, ec):
+        self._factory = factory
+        self._settings = settings
+        self._ec = ec
+        self._toolkit = None
+        self._disabled = False
+        self.escalated = 0
+
+    @property
+    def coverage(self) -> float:
+        return self._ec.coverage
+
+    @property
+    def config(self):
+        return self._ec.config
+
+    def toolkit(self):
+        """Return the escalation MatteToolkit, building it once on first use.
+        None if the model is absent or the build failed (escalation disabled)."""
+        if self._toolkit is not None or self._disabled:
+            return self._toolkit
+        path = matte_mod.matting_escalation_model_path(self._settings)
+        if path is None or not path.is_file():  # cheap, import-free guard
+            self._disabled = True
+            return None
+        try:
+            self._toolkit = self._factory(self._settings, self._ec.config)
+        except Exception:
+            self._disabled = True
+        return self._toolkit
+
+    def close(self) -> None:
+        if self._toolkit is not None:
+            try:
+                self._toolkit.close()
+            finally:
+                self._toolkit = None
+
+
 class ImageService:
     """Owns the engine + assembler on behalf of the UI bridge.
 
@@ -1774,12 +1821,15 @@ class ImageService:
             # the bridge (§2) — mirrors _cull_load_error.
             return self._matte_load_error(exc)
 
+        esc = self._build_escalation(config)  # 5.5g bust escalation; None = off
         catalog_dir = self._store.catalog_frames_dir(record.id).resolve()
         matted_dir = self._store.matted_dir(record.id)
         try:
             matted_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             toolkit.close()
+            if esc is not None:
+                esc.close()
             return {"ok": False, "kind": "io",
                     "error": f"could not create the matte directory: {exc}"}
         matted_dir = matted_dir.resolve()
@@ -1871,6 +1921,10 @@ class ImageService:
                     row["status"] = "matte_failed"
                     row["error"] = str(exc)
                     continue
+                # (d') 5.5g: a bust (high coverage) is re-matted with BiRefNet;
+                # the better-keyed cutout replaces tmp/reading (never worse).
+                tmp, reading = self._apply_escalation(esc, src_abs, matted_dir,
+                                                      tmp, reading, config)
                 # (e) degenerate gate (empty / keyed-nothing-out masks)
                 status = matte_mod.evaluate_matte(reading, config)
                 if status is not None:
@@ -1897,6 +1951,8 @@ class ImageService:
                 row["coverage"] = round(reading.coverage, 4)
         finally:
             toolkit.close()
+            if esc is not None:  # frees the BiRefNet session; .escalated persists
+                esc.close()
 
         blocked = removed
         failed = len(results) - matted - skipped - blocked
@@ -1940,6 +1996,11 @@ class ImageService:
                 "matted_at": _now_iso(),
                 "app_version": __version__,
             }
+            if esc is not None:  # 5.5g bust escalation provenance (only if on)
+                ep = matte_mod.matting_escalation_model_path(self._settings)
+                manifest.matting["escalation_variant"] = esc.config.variant
+                manifest.matting["escalation_model"] = ep.name if ep else None
+                manifest.matting["escalated"] = esc.escalated
             manifest.updated_at = _now_iso()  # CatalogManifest has no touch()
             try:
                 self._store.save_catalog(manifest)
@@ -2655,12 +2716,15 @@ class ImageService:
             except Exception:
                 matte_status = "matte_unavailable"
             else:
+                esc = self._build_escalation(mconfig)  # 5.5g bust escalation
                 try:
                     mfinal, matte_status = self._matte_one(
                         toolkit, final, self._store.cache_matted_dir(record.id),
-                        mconfig)
+                        mconfig, esc=esc)
                 finally:
                     toolkit.close()
+                    if esc is not None:
+                        esc.close()
                 if mfinal is not None:
                     entry.matted_path = f"cache/matted/{mfinal.name}"
 
@@ -3003,6 +3067,7 @@ class ImageService:
             return exc.kind
         except Exception:
             return "matte_unavailable"
+        esc = self._build_escalation(config)  # 5.5g bust escalation; None = off
         try:
             verdict = self._classify(toolkit, src_abs)
             if verdict.blocked:
@@ -3026,9 +3091,11 @@ class ImageService:
                 self._save_manifest_quietly(record.id, source, manifest, token)
                 return None
             mfinal, status = self._matte_one(toolkit, src_abs, matted_dir,
-                                             config)
+                                             config, esc=esc)
         finally:
             toolkit.close()
+            if esc is not None:
+                esc.close()
         if mfinal is not None:
             prefix = ("cache/matted" if source == "cache"
                       else "catalog/matted")
@@ -3037,10 +3104,61 @@ class ImageService:
                         frame_id=entry.frame_id, status=status)
         return status
 
-    def _matte_one(self, toolkit, src_abs, matted_dir, config):
+    def _build_escalation(self, config):
+        """A _MatteEscalation for this run, or None when escalation is unset
+        (the byte-for-byte no-op path). 5.5g / 3f residual. NEVER raises —
+        coercion is defensive today, and this is called before the primary
+        toolkit's close guard, so any future raising path in coercion must
+        still degrade to 'escalation off' rather than leak the toolkit."""
+        try:
+            ec = matte_mod.coerce_escalation_config(self._settings, config)
+        except Exception:
+            return None
+        return (_MatteEscalation(self._matte_factory, self._settings, ec)
+                if ec is not None else None)
+
+    def _apply_escalation(self, esc, src_abs, matted_dir, tmp, reading, config):
+        """After a PRIMARY matte wrote ``tmp``, optionally re-matte the same
+        source with the escalation (BiRefNet) model and return the (tmp, reading)
+        to PROMOTE. The losing tmp is deleted. Never raises.
+
+        Passthrough (returns the primary tmp/reading unchanged) when: escalation
+        is off (esc None); the primary coverage is non-finite; the primary
+        coverage is below the escalation threshold (not a bust signature); or the
+        escalation toolkit is unavailable. Otherwise the escalated result is
+        PREFERRED iff it is usable by the SAME gate AND keys strictly MORE out
+        (lower coverage) than the primary — the never-worse rail, so escalation
+        can never ship a matte worse than the primary."""
+        if (esc is None
+                or not math.isfinite(reading.coverage)
+                or reading.coverage < esc.coverage):
+            return tmp, reading
+        tk = esc.toolkit()
+        if tk is None:
+            return tmp, reading
+        # A distinct temp; still *.png.tmp so both stale-tmp sweeps reap a
+        # crashed-run leftover, and it cannot collide with the primary tmp
+        # (<stem>.png.tmp) or any final (<stem>.png).
+        esc_tmp = matted_dir / f"{src_abs.stem}.esc.png.tmp"
+        try:
+            esc_reading = tk.matter.matte(src_abs, esc_tmp)
+        except Exception:
+            self._delete_quietly(esc_tmp)
+            return tmp, reading
+        if (matte_mod.evaluate_matte(esc_reading, config) is None
+                and math.isfinite(esc_reading.coverage)
+                and esc_reading.coverage < reading.coverage):
+            self._delete_quietly(tmp)
+            esc.escalated += 1
+            return esc_tmp, esc_reading
+        self._delete_quietly(esc_tmp)
+        return tmp, reading
+
+    def _matte_one(self, toolkit, src_abs, matted_dir, config, esc=None):
         """Matte ONE source frame (the 3f per-frame steps d-f: temp namespace
         no final can carry -> degenerate coverage gate -> atomic promote).
-        Returns (final_path | None, status). Never raises."""
+        ``esc`` (5.5g) optionally re-mattes a bust with BiRefNet before the
+        gate. Returns (final_path | None, status). Never raises."""
         try:
             matted_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -3054,6 +3172,8 @@ class ImageService:
         except Exception:
             self._delete_quietly(tmp)
             return None, "matte_failed"
+        tmp, reading = self._apply_escalation(esc, src_abs, matted_dir, tmp,
+                                              reading, config)
         status = matte_mod.evaluate_matte(reading, config)
         if status is not None:
             self._delete_quietly(tmp)
@@ -3371,6 +3491,11 @@ class ImageService:
             "steps": _int("steps", 28),
             "cfg_scale": _float("cfg_scale", 5.5),
             "sampler": str(sampler) if sampler else "euler_a",
+            # 5.5b: default True; only an explicit `false` disables chunking
+            # (the A/B baseline). A missing/junk value is truthy-coerced to the
+            # safe full-prompt path.
+            "chunked": self._settings.get("image_gen.encode_chunked", True)
+            is not False,
         }
 
     def _persist_image(

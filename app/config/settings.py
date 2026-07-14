@@ -64,6 +64,12 @@ DEFAULTS: dict[str, Any] = {
             # Apache-2.0) — or isnet-general-use / a BiRefNet ONNX export per
             # image_gen.matting.variant.
             "matting_model_path": None,
+            # Stage-5.5g close-up-bust escalation (3f residual): a SECOND,
+            # user-placed matting model (a BiRefNet ONNX export, ~973 MB / lite
+            # ~214 MB; ZhengPeng7/BiRefNet, MIT) re-mattes tight busts that
+            # isnet_anime leaves a translucent full-frame pane on. None = OFF
+            # (escalation is a byte-for-byte no-op; the primary matte is used).
+            "matting_escalation_model_path": None,
         },
         "chat": {
             "variant": "default",  # "default" | "heavy"
@@ -80,6 +86,12 @@ DEFAULTS: dict[str, Any] = {
         "steps": 28,
         "cfg_scale": 5.5,
         "sampler": "euler_a",  # euler_a | euler | dpmpp_2m | dpmpp_2m_karras
+        # Stage-5.5b long-prompt CLIP encoding. True (default) = the chunked
+        # path that carries a >77-token prompt in full (all outfit/style/free-
+        # text/pose fragments reach the model). False = the pre-5.5b single
+        # encode_prompt (diffusers truncates at 77) — the A/B baseline for the
+        # 5.5b hardware validation. Coerced to bool; a bad hand-edit -> True.
+        "encode_chunked": True,
         # Stage-3b IP-Adapter identity steer strength. Useful band ~0.3-0.8
         # (advisory); engine bound is [0, 1], and a bad hand-edit degrades to
         # this default rather than crashing.
@@ -125,6 +137,15 @@ DEFAULTS: dict[str, Any] = {
             "feather_px": 0,           # Gaussian re-soften after erode, int [0, 8]
             "coverage_min": 0.02,      # degenerate floor (solid-alpha fraction)
             "coverage_max": 0.98,      # degenerate ceiling
+            # Stage-5.5g bust escalation (3f residual). When
+            # models.image.matting_escalation_model_path is set, a frame whose
+            # PRIMARY solid-alpha coverage >= escalation_coverage is re-matted
+            # with escalation_variant and the lower-coverage (better-keyed)
+            # cutout is promoted. 0.85 sits above the clean-frame ceiling
+            # (~0.28) and below coverage_max (0.98), so in-band busts get the
+            # BiRefNet re-matte. Coerced + clamped; a bad hand-edit -> default.
+            "escalation_variant": "birefnet",
+            "escalation_coverage": 0.85,
         },
         # Stage-5 character-over-background compositing (§13). All coerced +
         # clamped (bad hand-edit -> code default). `anchor` places the matted

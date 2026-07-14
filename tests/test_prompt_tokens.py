@@ -108,6 +108,34 @@ def test_encode_chunked_short_prompt_is_one_window():
     assert pipe.calls == 1  # behaviourally identical to the old string path
 
 
+def test_encode_chunked_disabled_is_single_encode(monkeypatch):
+    # 5.5b A/B baseline: chunked=False encodes the RAW strings once (diffusers
+    # truncates at 77), regardless of how many comma windows the prompt would
+    # otherwise fill. One encode_prompt call, 77-length embeds.
+    torch = pytest.importorskip("torch")
+    tok = _WordTokenizer()
+    pipe = _fake_pipe(torch, tok)
+    text = ", ".join(f"detail {i} here" for i in range(60))  # would be >=2 windows
+    assert len(_comma_windows(tok, text, budget=CLIP_CONTENT_BUDGET)) >= 2
+
+    seen = {}
+
+    real = pipe.encode_prompt
+
+    def _spy(prompt, negative_prompt, num_images_per_prompt,
+             do_classifier_free_guidance):
+        seen["prompt"] = prompt
+        return real(prompt, negative_prompt, num_images_per_prompt,
+                    do_classifier_free_guidance)
+
+    monkeypatch.setattr(pipe, "encode_prompt", _spy)
+    emb = encode_chunked(pipe, torch, text, "lowres, bad hands", chunked=False)
+    assert pipe.calls == 1                          # NOT windowed
+    assert seen["prompt"] == text                   # the whole raw string
+    assert emb["prompt_embeds"].shape == (1, 77, 2048)
+    assert emb["negative_prompt_embeds"].shape == (1, 77, 2048)
+
+
 # -- token_report (pure) -----------------------------------------------------
 
 
