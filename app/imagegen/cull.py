@@ -119,6 +119,10 @@ class CandidateScore:
     content_category: str | None = None
     content_matched: str | None = None
     rank: int | None = None
+    # WHICH gate rejected (5.5 acceptance finding: 53/64 frames died as bare
+    # "rejected_quality" with no way to tell face_too_small from blurry —
+    # the floor could not be tuned from evidence). None while not rejected.
+    reason: str | None = None
 
     @property
     def rejected(self) -> bool:
@@ -131,6 +135,7 @@ class CandidateScore:
             "det_score": self.det_score,
             "face_area_fraction": self.area_fraction,
             "face_count": self.face_count,
+            "reason": self.reason,  # which gate rejected; None when kept
         }
 
     def content_dict(self) -> dict:
@@ -144,13 +149,22 @@ class CandidateScore:
 @dataclass(frozen=True)
 class CullConfig:
     batch: int = 64            # ~3-4x over-generation to net the 15-30 band
-    keep_cap: int = 30         # suggested confirmation ceiling (advisory)
+    keep_cap: int = 30         # PROPOSED ceiling (enforced in cull_and_rank —
+    #                            the 3d ~15-30 training band's upper edge)
     floor: int = 15            # below this, `short` -> UI offers generate-more
-    grid_size: int = 12        # the confirmation grid
+    grid_size: int = 12        # RETIRED as a cap (5.5: 12 < floor 15 was a
+    #                            deadlock); parsed for settings compat only
     similarity_floor: float = 0.50   # same-person cosine (conservative/tight)
     det_score_floor: float = 0.50
     sharpness_floor: float = 100.0   # Laplacian variance
-    face_area_min: float = 0.04
+    # 0.04 -> 0.02 (5.5 acceptance evidence): a real 64-batch rendered every
+    # frame sharp (min 294) + confident (det 0.869) single faces, but the
+    # full-body-ish compositions put the face at 0.0205-0.0483 of the frame —
+    # 0.04 sliced the middle of that distribution and rejected 53/64. The
+    # floor's job is degenerate/no-subject frames, not composition; CCIP
+    # embeds the whole character, so a small face does not degrade identity
+    # similarity the way the old ArcFace-era floor assumed. 0.02 kept 64/64.
+    face_area_min: float = 0.02
     face_area_max: float = 0.90
     face_swap_enabled: bool = False
 
@@ -297,6 +311,7 @@ def score_candidate(
         reading = toolkit.embedder.embed(path)
     except Exception:
         score.status = STATUS_REJECTED_ERROR
+        score.reason = "decode_error"
         return score
     score.face_count = reading.face_count
     score.det_score = reading.det_score
@@ -315,19 +330,35 @@ def score_candidate(
     score.content_matched = verdict.matched
     if verdict.blocked:
         score.status = STATUS_REJECTED_CONTENT
+        score.reason = "content"
         return score
 
-    # (4) quality floor (free from the detection pass)
+    # (4) quality floor (free from the detection pass). Each arm names its
+    # gate in ``reason`` so a rejection is tunable from evidence (the 5.5
+    # acceptance lesson: 53 bare "rejected_quality" hid a face_area miscalib).
     if not reading.found or reading.face_count == 0:
         score.status = STATUS_REJECTED_NO_FACE
+        score.reason = "no_face"
         return score
-    if (
-        reading.face_count != 1
-        or reading.det_score < config.det_score_floor
-        or not (config.face_area_min <= reading.area_fraction <= config.face_area_max)
-        or reading.sharpness < config.sharpness_floor
-    ):
+    if reading.face_count != 1:
         score.status = STATUS_REJECTED_QUALITY
+        score.reason = "multi_face"
+        return score
+    if reading.det_score < config.det_score_floor:
+        score.status = STATUS_REJECTED_QUALITY
+        score.reason = "low_confidence"
+        return score
+    if reading.area_fraction < config.face_area_min:
+        score.status = STATUS_REJECTED_QUALITY
+        score.reason = "face_too_small"
+        return score
+    if reading.area_fraction > config.face_area_max:
+        score.status = STATUS_REJECTED_QUALITY
+        score.reason = "face_too_large"
+        return score
+    if reading.sharpness < config.sharpness_floor:
+        score.status = STATUS_REJECTED_QUALITY
+        score.reason = "blurry"
         return score
 
     # (5) identity similarity to the reference
@@ -335,6 +366,7 @@ def score_candidate(
     score.similarity = similarity
     if similarity < config.similarity_floor:
         score.status = STATUS_REJECTED_SIMILARITY
+        score.reason = "off_identity"
         return score
 
     # (6) aesthetic (soft — rank only; a failure must not reject an on-model frame)
@@ -349,15 +381,22 @@ def score_candidate(
 def cull_and_rank(
     scores: list[CandidateScore], config: CullConfig
 ) -> tuple[list[CandidateScore], bool]:
-    """Rank the survivors (kept) by (similarity DESC, aesthetic DESC); the top
-    ``grid_size`` become PROPOSED (the confirmation grid), the rest stay KEPT
-    (still confirmable). Returns (survivors, short) where ``short`` means fewer
-    on-model survivors than the floor — the UI should offer generate-more."""
+    """Rank the survivors (kept) by (similarity DESC, aesthetic DESC); ALL of
+    them become PROPOSED (the confirmation grid) up to ``keep_cap`` — the 3d
+    training ceiling, now enforced (it was advisory). Survivors past the cap
+    stay KEPT (still confirmable via the backend). Returns (survivors, short)
+    where ``short`` means fewer on-model survivors than the floor — the UI
+    should offer generate-more.
+
+    5.5 acceptance fix: the old top-``grid_size``(12) cap sat BELOW the
+    15-image training floor, so the window could never surface enough
+    confirmable candidates — a structural deadlock. ``grid_size`` no longer
+    caps anything (the setting is still parsed for compatibility)."""
     survivors = [s for s in scores if s.status == STATUS_KEPT]
     survivors.sort(key=lambda s: (s.similarity, s.aesthetic), reverse=True)
     for i, score in enumerate(survivors):
         score.rank = i + 1
-        if i < config.grid_size:
+        if i < config.keep_cap:
             score.status = STATUS_PROPOSED
         else:
             score.status = STATUS_KEPT
@@ -458,10 +497,16 @@ def coerce_cull_config(settings: Settings) -> CullConfig:
     # batch is the one knob with no downstream per-request re-validation (it
     # drives the generate loop directly), so clamp it here — a hand-edited
     # 1e9 must not launch a billion renders. Clamp, don't error (degrade).
+    floor = _int("floor", d.floor)
+    # keep_cap now CAPS the confirmable (PROPOSED) set, so a cap below the
+    # floor would resurrect the 5.5 deadlock (the shipped grid_size 12 <
+    # floor 15 bug) — a hand-edit can tune either, but never into
+    # contradiction: the cap is lifted to at least the floor.
+    keep_cap = max(_int("keep_cap", d.keep_cap), floor)
     return CullConfig(
         batch=min(256, max(1, _int("batch", d.batch))),
-        keep_cap=_int("keep_cap", d.keep_cap),
-        floor=_int("floor", d.floor),
+        keep_cap=keep_cap,
+        floor=floor,
         grid_size=_int("grid_size", d.grid_size),
         similarity_floor=_float("similarity_floor", d.similarity_floor),
         det_score_floor=_float("det_score_floor", d.det_score_floor),

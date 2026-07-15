@@ -240,13 +240,30 @@ def test_rank_orders_by_similarity_then_aesthetic():
     assert survivors[0].rank == 1 and survivors[2].rank == 3
 
 
-def test_grid_size_marks_proposed_rest_kept():
+def test_all_survivors_proposed_up_to_keep_cap():
+    # 5.5 acceptance fix: EVERY survivor is confirmable from the window, up to
+    # keep_cap (the 3d training band's ceiling, now enforced). grid_size no
+    # longer caps anything — the old top-12 cap sat BELOW the 15-image floor,
+    # a structural deadlock.
     scores = [_kept(str(i), 0.9 - i * 0.01, 0.5) for i in range(20)]
-    survivors, short = cull_and_rank(scores, CullConfig(grid_size=12, floor=15))
+    survivors, short = cull_and_rank(
+        scores, CullConfig(grid_size=12, keep_cap=30, floor=15))
+    proposed = [s for s in survivors if s.status == STATUS_PROPOSED]
+    assert len(proposed) == 20          # grid_size(12) does NOT cap
+    assert short is False               # 20 >= floor 15
+
+
+def test_keep_cap_bounds_the_proposed_set():
+    scores = [_kept(str(i), 0.9 - i * 0.01, 0.5) for i in range(40)]
+    survivors, short = cull_and_rank(
+        scores, CullConfig(keep_cap=30, floor=15))
     proposed = [s for s in survivors if s.status == STATUS_PROPOSED]
     kept = [s for s in survivors if s.status == STATUS_KEPT]
-    assert len(proposed) == 12 and len(kept) == 8
-    assert short is False  # 20 >= floor 15
+    assert len(proposed) == 30 and len(kept) == 10
+    # the cap keeps the BEST-ranked 30 (ranked before capping)
+    assert all(s.rank <= 30 for s in proposed)
+    assert all(s.rank > 30 for s in kept)
+    assert short is False
 
 
 def test_short_when_below_floor():
@@ -261,6 +278,73 @@ def test_rejected_never_survive():
               _kept("k", 0.9, 0.5)]
     survivors, _ = cull_and_rank(scores, CFG)
     assert [s.candidate_id for s in survivors] == ["k"]
+
+
+# -- per-gate rejection reasons (5.5 diagnosability) ---------------------------
+
+
+def _reading(**kw):
+    base = dict(found=True, face_count=1, det_score=0.9, area_fraction=0.2,
+                sharpness=500.0, embedding=emb_for_sim(0.9))
+    base.update(kw)
+    return FaceReading(**base)
+
+
+@pytest.mark.parametrize("reading_kw,expected_status,expected_reason", [
+    (dict(found=False, face_count=0), STATUS_REJECTED_NO_FACE, "no_face"),
+    (dict(face_count=2), STATUS_REJECTED_QUALITY, "multi_face"),
+    (dict(det_score=0.1), STATUS_REJECTED_QUALITY, "low_confidence"),
+    (dict(area_fraction=0.01), STATUS_REJECTED_QUALITY, "face_too_small"),
+    (dict(area_fraction=0.95), STATUS_REJECTED_QUALITY, "face_too_large"),
+    (dict(sharpness=10.0), STATUS_REJECTED_QUALITY, "blurry"),
+    (dict(embedding=emb_for_sim(0.1)), STATUS_REJECTED_SIMILARITY,
+     "off_identity"),
+])
+def test_rejection_names_its_gate(reading_kw, expected_status, expected_reason):
+    # The 5.5 acceptance lesson: 53 bare "rejected_quality" hid a face_area
+    # miscalibration. Every rejecting gate must name itself.
+    tk = toolkit(_reading(**reading_kw))
+    score = score_candidate(tk, tk.ref_reading, "c1", "x.png", CFG)
+    assert score.status == expected_status
+    assert score.reason == expected_reason
+    assert score.quality_dict()["reason"] == expected_reason  # persisted
+
+
+def test_kept_and_content_reasons():
+    tk = toolkit(_reading())
+    score = score_candidate(tk, tk.ref_reading, "c1", "x.png", CFG)
+    assert score.status == STATUS_KEPT and score.reason is None
+    tk2 = toolkit(_reading(), verdict=ContentVerdict(
+        blocked=True, category="minors", matched="loli"))
+    score2 = score_candidate(tk2, tk2.ref_reading, "c1", "x.png", CFG)
+    assert score2.status == STATUS_REJECTED_CONTENT and score2.reason == "content"
+    tk3 = toolkit(None, emb_raises=True)
+    score3 = score_candidate(tk3, tk3.ref_reading, "c1", "x.png", CFG)
+    assert score3.status == STATUS_REJECTED_ERROR
+    assert score3.reason == "decode_error"
+
+
+def test_keep_cap_never_coerces_below_the_floor(tmp_path):
+    # A hand-edited keep_cap below the floor would resurrect the 5.5 deadlock
+    # (the shipped grid_size 12 < floor 15 bug) — the coercion lifts it.
+    s = Settings(tmp_path / "s.json")
+    s.set("image_gen.bootstrap.keep_cap", 5)
+    cfg = coerce_cull_config(s)
+    assert cfg.keep_cap == cfg.floor == 15
+    s.set("image_gen.bootstrap.keep_cap", 0)      # non-positive -> default
+    assert coerce_cull_config(s).keep_cap == 30
+    s.set("image_gen.bootstrap.floor", 40)        # floor above the cap lifts it
+    assert coerce_cull_config(s).keep_cap == 40
+
+
+def test_face_area_floor_default_is_evidence_tuned():
+    # 5.5 acceptance: a real 64-batch put sharp, confident single faces at
+    # 0.0205-0.0483 face-area; the old 0.04 floor rejected 53/64 of them.
+    assert CullConfig().face_area_min == 0.02
+    # a reading from the measured band now passes the quality floor
+    tk = toolkit(_reading(area_fraction=0.03))
+    score = score_candidate(tk, tk.ref_reading, "c1", "x.png", CFG)
+    assert score.status == STATUS_KEPT
 
 
 # -- config coercion ---------------------------------------------------------

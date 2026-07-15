@@ -102,13 +102,18 @@ DEFAULTS: dict[str, Any] = {
         # degrades to the code default, never crashes.
         "bootstrap": {
             "batch": 64,             # candidates to generate (~3-4x over)
-            "keep_cap": 30,          # suggested confirmation ceiling
+            "keep_cap": 30,          # PROPOSED ceiling (enforced; the 3d band)
             "floor": 15,             # below this -> offer generate-more
-            "grid_size": 12,         # the confirmation grid
+            "grid_size": 12,         # retired as a cap (5.5: 12 < floor 15
+            #                          deadlocked the window); kept for compat
             "similarity_floor": 0.5,  # same-person cosine (conservative)
             "det_score_floor": 0.5,
             "sharpness_floor": 100.0,
-            "face_area_min": 0.04,
+            # 0.04 -> 0.02 (5.5 acceptance evidence): full-body-ish base
+            # compositions put sharp, confident single faces at 0.02-0.05 of
+            # the frame; 0.04 rejected 53/64 of a real batch as bare
+            # "quality". The floor catches degenerate frames, not framing.
+            "face_area_min": 0.02,
             "face_area_max": 0.9,
             "face_swap_enabled": False,  # optional identity lock (inswapper)
         },

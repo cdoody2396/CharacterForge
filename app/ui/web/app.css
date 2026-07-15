@@ -453,6 +453,15 @@ details.card.section > .fields { padding: 0 22px 20px; }
   background: var(--bg);
 }
 .seg-row .opt:last-child { border-right: 0; }
+/* 5.5 acceptance fix: this block outranked the generic .opt.on (equal
+   specificity, later in source), so a SELECTED segmented option rendered
+   pixel-identical to an unselected one — gender presentation and every
+   anatomy single-select showed no indication when clicked. */
+.seg-row .opt.on {
+  background: rgba(139, 124, 246, .22);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--text);
+}
 
 /* swatch tiles (colour / thumbnail options) */
 .opt.swatch { padding: 5px 12px 5px 6px; }
@@ -730,6 +739,31 @@ button.ghost.danger, .lib-btn.ghost.danger { color: #e06c75; }
   background: rgba(0,0,0,.6); color: #fff; padding: 1px 6px; border-radius: 999px;
 }
 .pf-vetted-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* 5.5 acceptance: bigger, judgeable candidate tiles + full-size zoom */
+.pf-grid.wide { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.pf-zoom-btn {
+  position: absolute; top: 4px; left: 6px; z-index: 2;
+  width: 24px; height: 24px; line-height: 22px; text-align: center;
+  border: 0; border-radius: 6px; cursor: pointer; font-size: 13px;
+  background: rgba(0,0,0,.55); color: #fff;
+}
+.pf-zoom-btn:hover { background: rgba(0,0,0,.8); }
+.pf-zoom {
+  position: fixed; inset: 0; z-index: 100; cursor: zoom-out;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.82);
+}
+.pf-zoom img {
+  max-width: 92vw; max-height: 92vh; border-radius: 10px;
+  box-shadow: 0 8px 40px rgba(0,0,0,.7);
+}
+.pf-batch { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.pf-batch input { width: 64px; }
+.pf-vetted-badge {
+  position: absolute; top: 4px; right: 28px; font-size: 10px;
+  background: var(--accent); color: #fff; padding: 1px 6px; border-radius: 999px;
+}
 
 .pf-pose-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 8px 0; }
 .pf-select { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }

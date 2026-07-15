@@ -201,6 +201,16 @@ class Api:
         generating. Runs everywhere (no GPU needed)."""
         return self._images.preview_prompt(character_id)
 
+    def creator_prompt_preview(self, payload: Any = None) -> dict:
+        """Live prompt preview for the IN-PROGRESS creator form (5.5): builds
+        a transient record from the payload (nothing persisted; partial forms
+        allowed; the age + Layer-1 gates still run) and assembles it exactly
+        like image_prompt_preview. Runs everywhere (no GPU needed)."""
+        record = self._creator.preview_record(payload)
+        if isinstance(record, dict):
+            return record
+        return self._images.preview_record_prompt(record)
+
     def image_generate_base(self, character_id: Any = None, seed: Any = None) -> dict:
         """One gated base render (3a). On this build sandbox it returns a
         structured engine-unavailable error; on the target machine it

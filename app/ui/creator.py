@@ -441,7 +441,8 @@ class CreatorService:
     # -- payload validation ----------------------------------------------------
 
     def _build_record(
-        self, payload: dict, *, identity: IdentityAnchor | None = None
+        self, payload: dict, *, identity: IdentityAnchor | None = None,
+        required_groups: frozenset[str] | tuple | None = None,
     ) -> CharacterRecord:
         name = str(payload.get("name") or "").strip()
         if not name:
@@ -462,9 +463,45 @@ class CreatorService:
             # 5.5c render-identity minimum: a character cannot be constructed
             # (created OR edited) without every required group. Catalog-driven,
             # so a drop-in file that marks a new group required is enforced with
-            # no code change.
-            required_groups=self._required_group_ids(),
+            # no code change. The preview path passes () — a partial form must
+            # preview (the gate stays on every PERSISTING path).
+            required_groups=(self._required_group_ids()
+                             if required_groups is None else required_groups),
         )
+
+    def preview_record(self, payload: object) -> CharacterRecord | dict:
+        """Build a TRANSIENT record from an in-progress creator form for the
+        live prompt preview (5.5 acceptance: the panel was dead during create
+        because image_prompt_preview needs a SAVED id). Nothing is persisted;
+        a partial form previews (no required-selection gate; a placeholder
+        name when empty) — but every OTHER gate still runs: strict payload
+        shape, the age hard gate (Layer 3), and the Layer-1 content gates.
+        Returns the record, or the same structured error dict create returns."""
+        if not isinstance(payload, dict):
+            return {"ok": False, "kind": "invalid", "field": None,
+                    "error": "malformed payload"}
+        preview = dict(payload)
+        if not str(preview.get("name") or "").strip():
+            preview["name"] = "Preview"  # display-only; never persisted
+        try:
+            return self._build_record(preview, required_groups=())
+        except _Invalid as exc:
+            return {"ok": False, "kind": "invalid", "field": exc.field,
+                    "error": str(exc)}
+        except ContentBlocked as exc:
+            self._audit.log(
+                "filter_block",
+                layer=1,
+                category=exc.category,
+                context=f"creator.preview.{exc.field_name}",
+                matched=exc.matched,
+            )
+            return {"ok": False, "kind": "blocked", "field": exc.field_name,
+                    "category": exc.category,
+                    "error": f"blocked by the content policy ({exc.category})"}
+        except AgeError as exc:
+            return {"ok": False, "kind": "age", "field": "age",
+                    "error": str(exc)}
 
     def _group_for(self, gid: str, channel: str) -> OptionGroup:
         group = self._catalog.get(gid)

@@ -354,6 +354,61 @@ The 22 unreachable bridges get a surface, in the two places §6 and §10 already
 
 ---
 
+### Stage 5.6 — Character Vocabulary V2  **[HERE]** data + format, **[HARDWARE]** render pass (split 5.6a–5.6e)
+
+**Goal:** Implement `CHARACTER_VOCABULARY_V2.md` (user-authored, repo root, Rev 2) — the from-scratch
+vocabulary redesign: ~140 record groups / ~1,300 options across four subsets (A Identity & Origin,
+B Body & Render, C Mind & Voice, D Life & Bonds), data-driven conditionality, slider removal
+(species-relative categorical bands), gated adult files, and the P0–P3 prompt-tier contract.
+
+**Depends on:** Stage 5.5. **Reopens (user-directed, recorded in the doc's contract flags):** the
+BUILD_PLAN Stage-6 vocabulary deferral (flag 1 — subsets C/D become Stage-6 design inputs with
+provisional `Mem` columns, re-cut after the first live chat loop) and the §12 height/weight/muscle
+slider carve-out (flag 3 — needs a one-line DECISIONS amendment, user-approved at 5.6c).
+
+**Constraints (locked by the doc):** the required-7 group ids stay byte-identical (no
+construction-gate change); the age ≥20 gate is untouched; `catalog_states.json` unchanged;
+free text shrinks to five filtered slots (name, nickname, catchphrase, signature_note,
+companion_name).
+
+- **5.6a — §15 fifth format extension [HERE].** Group `visible_when` (data-driven conditionality —
+  species-class blocks, gated sub-fields; the rule ships in `_group_payload`, evaluated FRONT-END
+  against live selections with a re-render on selection change); option `class` metadata (JSON key
+  `"class"`, internal name `classes` — Python keyword; must reach `_option_payload`); group `tier`
+  (P0–P3, decoupled from `order`, which keeps driving form layout); a gated-options directory
+  (e.g. `app/data/options_gated/`) + a content-gate setting wired through the `load_option_catalog`
+  dir seam so the ungated catalog structurally lacks the entries (§11 Layer-3 pattern). Decision at
+  5.6a: the gate's default state.
+- **5.6b — Assembler tier ordering [HERE].** Tier-bucketed stable sort replacing the flat
+  `catalog.groups()` pass in `PromptAssembler.assemble`; a test that P0+P1 fit the first 77-token
+  window (`token_report.boundary_index`) on a maximal record — the doc's "tier = window ordering +
+  inclusion rule" contract (pooled embeds come from window 0, so first-window identity is
+  load-bearing).
+- **5.6c — Subset A+B data authoring [HERE, render-side].** The ~86-race file with `class`
+  metadata; all B groups with canonical Danbooru fragments; the every-fragment-passes-Layer-1
+  assembly test extended to the whole catalog; slider removal (data-only — the numeric machinery
+  goes dormant, still guarding `age`); the **DECISIONS §12 amendment** (draft for explicit user
+  approval: strike the height/weight/muscle reservation sentence + the §17 row; the
+  categorical-over-pseudo-precise principle is strengthened, not weakened); legacy slider records
+  keep loading leniently + lint (already true — decide editor surfacing, doc open item 3).
+- **5.6d — Subset C+D data [HERE, render:false].** Chat-side enumerations; the free-text swap
+  (delete `personality_notes`/`backstory`; `appearance_notes`→`signature_note` with a legacy-key
+  mapping so old records keep rendering; add `nickname`/`catchphrase`/`companion_name`;
+  `IMAGE_FREE_TEXT_KEYS` update). C/D `Mem` columns stay provisional for 6d (flag 1).
+- **5.6e — [HARDWARE] render pass.** Weak-honor P3 fields (face_shape, nose, B2 extremes on
+  non-standard frames) kept-or-cut on real renders (doc open item 7); full re-acceptance with the
+  V2 catalog.
+
+**Definition of done:** the V2 catalog loads with zero code change beyond the 5.6a/5.6b format +
+assembler deltas; conditional groups appear/disappear with the driving selection; gated files are
+structurally absent with the gate closed; a maximal record keeps P0+P1 inside the first window;
+every shipped fragment passes Layer-1 at assembly; legacy records load + lint; DECISIONS §12
+amended with user approval; suite green; the 5.6e hardware pass confirms render quality.
+**Safety attached:** none new — the gated-files mechanism is the existing Layer-3
+unrepresentable-state pattern applied to option loading; Layers 1–4 unchanged.
+
+---
+
 ### Stage 6 — Chat Loop  **[HARDWARE]** (memory/decay/selection logic partly **[HERE]**; split)
 **Goal:** Interact with characters; persistent human-like memory; avatar updates with conversation.
 **Depends on:** Stages 1–5.
@@ -384,16 +439,63 @@ The 22 unreachable bridges get a surface, in the two places §6 and §10 already
 
 ## CURRENT STATE
 
-**Current stage:** **Stage 5.5 — Creator & Image UI** (all sub-stages DONE-HERE; the
-final [HARDWARE] acceptance run is the only thing outstanding). **Sessions 1 (5.5a jobs
-+ 5.5b prompt budget), 2 (5.5c format delta + creator widgets + 5.5f nav), 3 (5.5d image
-UI + 5.5e library at scale), and 4 (5.5g promoted residuals) are DONE-HERE** (5.5g
-2026-07-14; **1015 tests passing, 1 skipped**). **Next: the full [HARDWARE] acceptance
-run on the RTX 4070 Super 12 GB** — create → avatar → reference → bootstrap → approve →
-train → catalog → matte → novel pose → composite over a scene, entirely from the window,
-with progress + cancel; plus the 5.5b chunking A/B and the 3c recall/purge drills. That
-single run clears the pending 5.5a / 5.5b / 5.5d / 3f-escalation flags and **completes
-Stage 5.5**; Stage 6 — Chat Loop (6a–6e) follows. 5.5g shipped: the 3f BiRefNet
+**Current stage:** **Stage 5.6 — Character Vocabulary V2** (next; split 5.6a–5.6e —
+see the stage block). **Stage 5.5 — Creator & Image UI is COMPLETE (2026-07-15)**:
+all sub-stages done-here AND the [HARDWARE] acceptance validated — the re-run after the
+session-5 fixes drove a fresh character entirely from the window (create → avatar →
+reference → bootstrap → **30 vetted confirmed** → **train to completion as a job** →
+catalog 20 → matted 20/20 → on-demand poses → identity render; composites the prior
+day), the **BiRefNet bust escalation fired on real frames** (`escalated: 3`,
+`birefnet-general.onnx` placed), and the user confirmed the result ("everything worked
+very well"). Two user-directed drills carry to the 5.6e hardware pass rather than
+blocking closure: the explicit 5.5b chunking A/B and the 3c minor-appearance
+recall/purge drills. The user also flagged that **more refinements will be required
+before Stage 6** — 5.6 is where they land. **IMPORTANT machine fact
+(2026-07-14): the workspace machine IS the RTX 4070 Super 12 GB target** — CUDA live,
+all weights placed including BiRefNet; [HARDWARE] validation runs here directly.
+**Sessions 1–4 were DONE-HERE, plus session 5 (2026-07-14): the first user-driven
+acceptance run + its findings fixed** (**1033 tests passing, 1 skipped**). **The first
+acceptance run (user-driven, from the window) got as far as create → avatar →
+reference → bootstrap → confirm → train-start and then STALLED on a structural
+deadlock** — findings, all root-caused from the run's own artifacts (job records /
+bootstrap manifest / audit log) and FIXED in session 5:
+(1) **cancel WORKED at the job layer** (two bootstrap cancels landed in 16–31 s, a train
+`Popen.terminate` in 50 s — the 5.5a mechanism legs are hardware-PROVEN) but looked dead:
+`jobs.js ctl.cancel` cleared the poll timer and never rescheduled, so the UI stopped
+watching — fixed (cancel keeps polling to terminal + one immediate nudge);
+(2) **the vetted-floor deadlock** — `cull_and_rank` proposed only the top `grid_size=12`
+while the floor wants 15 → the window could NEVER surface enough confirmable images;
+fixed: ALL survivors are proposed up to `keep_cap=30` (now enforced; grid_size retired
+as a cap);
+(3) **face_area_min 0.04 rejected 53/64 real candidates** — every one a sharp
+(min 294 vs floor 100), confident (det 0.869 vs 0.5) single face at 0.0205–0.0483
+face-area (full-body-ish compositions); floor → 0.02 (evidence-cited), and every
+rejecting gate now NAMES itself (`reasons` tallies in results + status + the persisted
+per-candidate readings + a UI summary line);
+(4) **bootstrap-more silently replaced** — the UI keyed `more:true` off the proposed
+grid (empty after a confirm); now it accumulates whenever candidates exist, with a
+batch-size input (1–256), a determinate progress bar (total=batch), and a cooperative
+cancel check inside the CPU cull phase; a union re-cull no longer demotes
+already-vetted candidates (CONFIRMED preserved from the vetted manifest);
+(5) creator fixes — segmented widgets showed NO selected state (a CSS-specificity bug:
+`.seg-row .opt` outranked `.opt.on`; one rule fixes gender presentation + every anatomy
+single-select), name/age now carry the required `*`, **create adopts edit mode on
+success** (no more duplicate records on re-click; save-while-working now works), and the
+**prompt panel is LIVE during create** (a new `creator_prompt_preview` bridge assembles
+the in-progress form through a transient record — partial forms preview, nothing
+persists, the age + Layer-1 gates still run);
+(6) avatar/vetted tiles at 512/320 px with a full-size zoom overlay + labeled re-roll.
+**Validated on the run's real data:** a re-cull of the same 64 on-disk candidates went
+from 11 proposed / short=true to **26 proposed + 27 kept + 11 confirmed (64/64 survive,
+short=false)** — the deadlock is gone; the user's persisted settings.json was migrated
+to the new floor. **Next: re-drive the acceptance run** (bootstrap → confirm 15–30 →
+train to completion → catalog → matte → pose → composite + the 5.5b chunking A/B + the
+3c drills; 3f escalation additionally needs a BiRefNet `.onnx` placed). That run clears
+the remaining 5.5a (reap leg) / 5.5b / 5.5d / 3f-escalation flags and **completes
+Stage 5.5**. **User feedback also produced `CHARACTER_VOCABULARY_V2.md`** (a from-scratch
+vocabulary redesign answering the height/weight-relativity + free-text critiques) —
+planned as **Stage 5.6 (5.6a–5.6e, see the stage block)**, which now precedes Stage 6 —
+Chat Loop. 5.5g shipped: the 3f BiRefNet
 close-up-bust escalation (a byte-for-byte no-op until a BiRefNet `.onnx` is placed; a
 per-frame coverage-routed re-matte with a never-worse rail), the `catalog_states.json`
 full canonical-tag rewrite (`over_shoulder`→`looking back` et al.), and a chunking-off
@@ -434,25 +536,33 @@ Stage 5.5d — Character image UI (**DONE-HERE** 2026-07-13 — all [HERE] DoD M
 Stage 5.5e — Library at scale (**DONE-HERE** 2026-07-13 — all DoD MET; footprint caching into the record + reconcile recompute; tag chip filter; grid/list toggle + virtualized list; profile container);
 Stage 5.5g — Promoted residuals (**DONE-HERE** 2026-07-14 — all [HERE] code MET; 1015 tests passing; the 3f BiRefNet close-up-bust escalation [byte-for-byte no-op until configured; coverage-routed re-matte + never-worse rail], the `catalog_states.json` full canonical-tag rewrite, the 5.5b chunking-off toggle, and a 3c real-classifier recall anchor; adversarially reviewed [red-team + correctness + DoD, 0 surviving findings]; **[HARDWARE] acceptance run + escalation/A/B/3c drills pending on the target — completes Stage 5.5**).
 **Pending hardware-validation flags:**
-- **Stage 5.5a** — the job MECHANISM is fully [HERE]-tested (cancel/progress/reconcile/
-  bridge contract, 965 green). **REMAINING on the target:** a real 31.5-min train and
-  ~15-min bootstrap driven as jobs, cancelled mid-run — confirming `Popen.terminate`
-  kills kohya, the VRAM slot frees, the prior LoRA survives, and progress polls at ~1 Hz;
-  plus a hard-kill → next-boot `jobs.reconcile()` reap of a real `data/jobs/*.json`. The
-  live-window job smoke (submit → poll → cancel, one window) rides the 5.5d acceptance run.
-- **Stage 5.5b** — the token count is **VALIDATED here** (the local CLIP tokenizer is on
-  disk). **REMAINING on the target:** the A/B — render the SAME fully-detailed record +
-  seed with and without chunking; the previously-dropped outfit / style / free-text / pose
-  fragments must visibly appear (and the shortened trigger must still fire the LoRA on real
-  weights). This lands with the 5.5d/5.5g acceptance run.
-- **Stage 5.5d** — the wiring is fully [HERE]-tested (every image_* bridge reachable from
-  the window; job dispatch for avatar/identity/bootstrap/train/catalog/matte/on-demand;
-  thumbnails + state-space; structured engine-unavailable on the sandbox). **REMAINING on
-  the target (the 5.5g acceptance run):** drive the full create → avatar candidates → pick
-  reference → bootstrap → approve the machine-vetted grid → train → catalog → matte → novel
-  pose → composite over a scene **entirely from the window**, with the job progress polling
-  at ~1 Hz and Cancel killing an in-process loop (bootstrap) and the kohya subprocess
-  (train) mid-run — no script.
+- **Stage 5.5a** — **VALIDATED 2026-07-14/15.** Cancel legs proven on the first run's
+  own `data/jobs/*.json` (two cooperative bootstrap cancels in **16 s / 31 s**; a train
+  `Popen.terminate` in **50 s**, prior-LoRA discipline never reached the replace;
+  ~1 Hz polling throughout — the jobs.js poll-halt defect that HID it was fixed in
+  session 5), and the re-run drove a **train to COMPLETION as a job** (`lora_trained`
+  audited, LoRA on disk) plus a determinate bootstrap (done 64 / total 64). The
+  hard-kill reap was never explicitly drilled — the sweep is [HERE]-tested and runs at
+  every boot (`jobs_reconciled` audited daily); noted, not blocking.
+- **Stage 5.5b** — token count validated here; chunked encoding carried the re-run's
+  renders (`encode_chunked: true` throughout). **REMAINING (carried to the 5.6e
+  hardware pass, not blocking 5.5):** the explicit A/B — same record + seed with
+  `encode_chunked` false — to visually confirm the once-dropped fragments appear only
+  in the chunked render. The shortened 6-hex trigger IS proven on real weights (the
+  re-run's LoRA-steered catalog holds identity).
+- **Stage 5.5d** — **VALIDATED 2026-07-15** (user-confirmed: "everything worked very
+  well"; evidence in the day's audit + manifests): a FRESH character driven entirely
+  from the window — created → avatar candidates → reference → bootstrap → **30
+  confirmed** (the new keep_cap; the old ceiling was 11) → **LoRA trained to
+  completion** → catalog 20 frames → **matted 20/20** → on-demand poses cached →
+  identity render; composites proven the prior day. The session-5 fixes (propose-all,
+  face_area 0.02, accumulate, visible cancel) held in live use.
+- **Stage 3f escalation (5.5g)** — **VALIDATED 2026-07-15**: `birefnet-general.onnx`
+  placed, and the coverage-routed escalation FIRED on real close-up busts —
+  `manifest.matting.escalated: 3` on the prior character's re-matte (the new character's
+  catalog crossed the threshold on 0 frames — correct routing, not a failure), basename
+  provenance recorded. The 3c minor-appearance recall + blocked-frame purge drills
+  remain user-directed and are **carried to the 5.6e hardware pass**.
 - **Stage 3a** — **VALIDATED 2026-07-12** (all eight §6 items PASS: first
   render + VRAM 10.35 GB + sidecar/audit; offline generate proven under a
   hard socket block with `models/sdxl_config` + `pipeline_config_dir` now
@@ -1096,3 +1206,6 @@ Carried forward; resolve at the relevant stage:
 - *(Stage 5.5c + 5.5f verification — 2026-07-13)* Ran an adversarial red-team + correctness + DoD/scope pass on the in-scope 5.5c/5.5f files, every Python finding re-executed against real code and every JS bridge name cross-checked against `shell.py`. **Exactly one defect survived — fixed + regression-tested: MEDIUM** — `_coerce_prompt_ranges` (`options.py`) coerced the `min`/`max` bounds with a bare `float()` and no finiteness guard, unlike every sibling coercer (`_coerce_number`/`_norm_number`/`_check_sliders`). This became newly reachable in 5.5c because `_group_payload` now emits `prompt_ranges` on the `creator_catalog()` bridge (the live slider band label), so a §15 hand-edited `Infinity`/`NaN` bound loaded cleanly — *not even recorded in `catalog.errors`* — then rode verbatim into the bridge payload as invalid strict JSON, rejecting the `JSON.parse` and bricking the **entire** creator (defeating the resilient-load contract twice: silent load + total brick). Fixed with the same `math.isfinite` guard the numeric-scalar path uses (+ `OverflowError` on the `float()` like `_coerce_number`); regression test asserts strict load rejects it AND resilient load records the skip while `describe()` stays strict-JSON-safe. Clean bills (all re-executed): missing-required construction rejected with `kind:"required"` on create + update (empty `required_groups` stays ungated); the required set is exactly the 7 render-identity groups and all `quick`; hostile option `image` paths (`..`, absolute POSIX/Windows, nested traversal, missing, wrong-extension) yield **no image, no raise, no out-of-tree read** with `describe()` staying strict JSON; required-but-not-quick raises on new-file + both merge-flip paths (recorded as a skip under resilient load); unknown widget raises on new-group + merge; `derive_widget` matches the spec table across every bundled group + the 5/6/12/13-option and multi-with-colours edges; legacy `from_dict` loads a required-incomplete record while `.create()` with the catalog set rejects and `validate_against` lints; `builders.describe()` works for all four kinds with the null image resolver; the JS required client-check only gates UX (the backend `required_groups` is always passed) and picker/single/multi state mutation is correct; option-image data-URIs are always finite base64. No scope creep (no image-pipeline bridges wired — 5.5d's job; `builders.js` retains a `<select>` for its own >10-option Scenes lists, outside the "no `<select>` in the creator" DoD). **981 tests passing, 1 skipped (+16 over 5.5b): options widget-derivation/required-quick/widget-enum/image-containment/finite-prompt_ranges, the character required-gate + lenient-load + lint, the creator drop-in-60→picker + image-data-URI-containment + missing-required, and the bridge required-set/widget shape. Stage 5.5c + 5.5f marked DONE-HERE.**
 - *(Stage 5.5g build — 2026-07-14)* **Session 4 of Stage 5.5: the promoted residuals — the 3f close-up-bust BiRefNet escalation, the 3g `catalog_states.json` canonical-tag rewrite, the 5.5b chunking-off toggle, and a 3c recall anchor — the last [HERE] code before Stage 5.5's [HARDWARE] acceptance run.** Planned in plan mode (3 Explore agents mapped matte/states/cull; 1 Plan agent designed the escalation seam; two user decisions settled: full canonical rewrite + a BiRefNet model will be placed on the target). **3f escalation** (the un-parked residual — 6e's avatar is a bust; `isnet_anime` leaves a translucent full-frame pane on tight busts because there is almost no background to key, so the per-image min-max stretch holds it at high alpha; measured coverage: clean wide frames ~0.18–0.28 solid-alpha, busts ~0.93–0.996). New settings `models.image.matting_escalation_model_path` (a second, user-placed BiRefNet `.onnx`; None = OFF) + `image_gen.matting.escalation_variant` (default `birefnet`) + `escalation_coverage` (default `0.85`, between the ~0.28 clean ceiling and `coverage_max` 0.98 so in-band busts 0.93–0.98 that *pass* the gate still escalate). `matte.py`: a `MatteConfig.model_path` seam (default None → the factory loads `matting_model_path`, byte-identical; set → it loads the explicit model) resolved in `_default_matte_factory`; `EscalationConfig` + `coerce_escalation_config` (returns None **only** when the path is UNSET — the byte-for-byte no-op guarantee, and unset≠misconfigured; a set-but-missing path yields a config that disables at build time; junk variant/coverage hand-edits degrade to defaults, never raise) + `matting_escalation_model_path`; exported. `service.py`: `_MatteEscalation` (owns the escalation toolkit for one run, built **lazily** on the first bust via the same injected `_matte_factory` — so a wide-frame-only catalog never loads the ~973 MB model, and a missing/corrupt model disables the run's escalation without raising; built at most once; `escalated` count for provenance) + `_build_escalation` (wrapped never-raise, since it is called before the primary toolkit's close guard) + the DRY `_apply_escalation` seam: after the primary matte writes `<stem>.png.tmp`, a frame with primary coverage ≥ `escalation_coverage` is re-matted to `<stem>.esc.png.tmp` (still `*.png.tmp`, reaped by the existing stale sweep, non-colliding with the primary tmp/final), and the escalated cutout is promoted **only if it passes the SAME `evaluate_matte` gate AND keys strictly more out (lower coverage) than the primary** — the never-worse rail, so escalation can never ship a worse matte; the losing tmp is deleted. Wired into all matte paths — `matte_catalog` (inline) and `_matte_one` (`esc=None` default keeps every non-escalation caller byte-identical) feeding `_heal_matte` + the cache-gen path — with `esc.close()` on every exit including the mkdir-fail early return. Provenance (`manifest.matting.escalation_variant`/`escalation_model` [basename only]/`escalated`) written **only when configured** (unconfigured manifest byte-identical). **Layers 1–4 unchanged** — the re-matte hits the SAME `src_abs` that already passed the Layer-2 classify-before-skip gate. **3g** — `catalog_states.json` fully rewritten to canonical Danbooru tags (`neutral`→`expressionless`, `smile`→`smile`, `laugh`→`laughing`, `sultry`→`seductive smile, half-lidded eyes`, `portrait`→`upper body, portrait, facing viewer`, `over_shoulder`→**`looking back`** [the confirmed defect]; `three_quarter` kept — no canonical equivalent); data-only, no code parses the string. **5.5b chunking-off toggle** — `engine.encode_chunked(..., chunked=True)`: `chunked=False` does one `encode_prompt` over the raw strings (the pre-5.5b truncate-at-77 path) and returns the same 4-embed dict; a new `GenerationRequest.chunked` field (default True) is threaded from `image_gen.encode_chunked` via `_generation_settings` (`… is not False` — only an explicit boolean `false` disables; missing/junk stays chunked) and all three backends pass `request.chunked`; default True is byte-identical; surfaced in `engine_status().generation`. This is the [HERE] gap that made 5.5b's A/B ("same record+seed, with and without chunking") runnable. **3c** — the recall/purge/face-swap code paths were already built + tested; added a sandbox-runnable RECALL anchor that drives the REAL `_ImgutilsContentClassifier` matching logic against the REAL `minor_coded_tags.txt` (faked WD14 tagger) — a minor-coded tag ≥ `MINOR_TAG_CONFIDENCE` blocks; below-threshold + clean frames don't. **1015 tests passing, 1 skipped (+11):** 8 matte-escalation (promotes-lower / rescues-`matte_full` / keeps-primary(not-better + fails-gate) / below-threshold-skips / not-configured-no-second-build / missing-model-degrades / lazy-build-once / pure-coerce-degrade incl. unset≠misconfigured), the engine chunk-off single-encode, the real-classifier recall anchor, and an every-shipped-states-fragment-passes-Layer-1 assertion; `test_resolve_cell_happy_path` + `test_engine_status` + the on-demand fragment assertion updated for the new tags/knob. Zero new dependencies; the sandbox heavy-import-clean subprocess probe still passes. `docs/IMAGE_PIPELINE.md` gained the escalation model/knobs/policy section.
 - *(Stage 5.5g verification — 2026-07-14)* Ran three parallel adversarial review agents (red-team robustness / correctness / DoD-scope) on the working-tree diff, each finding re-executed as a skeptic prompted to refute; each agent re-ran the affected suites. **Red-team: 0 surviving findings** across all six hunted classes — it fuzzed `coerce_escalation_config` with an 11×7×11 junk matrix (list/dict/NaN/Inf/null/bool/embedded-null/numeric) → 0 raises, coverage always finite+clamped, variant always valid; empirically confirmed the `*.png.tmp` sweep reaps `x.esc.png.tmp` while leaving finals; confirmed the never-worse rail admits no worse-matte/leftover-tmp case; confirmed `esc.close()` on every exit + build-at-most-once; confirmed the unset no-op and that the chunking expression only disables on explicit `false`. **Correctness: no bugs** — the `_apply_escalation` `(tmp, reading)` return is consistent in every branch, `os.replace` works for both the primary and escalated tmp, `evaluate_matte` re-run by the caller is deterministic, the escalation config inherits the primary's band, `escalated` reads correctly after `close()`, all paths wired + closed, the chunk-off single-encode returns the right shape, the states JSON is valid with the loader minimums met. **DoD/scope: clean** — every touched file in-scope, no DECISIONS/persona-vocabulary/§15-format/5.5a–f edits, no new safety layer (the escalation is judged by the same gate), strict `{ok,kind}` preserved, provenance basename-only, byte-for-byte-no-op upheld in code AND test, all DoD behaviors asserted. **Actioned:** hardened `_build_escalation` to never raise (the red-team's one *latent* defense-in-depth note — it sits before the primary toolkit's close guard, so a hypothetical future raising coercion path must still degrade rather than leak the toolkit) and converted the DoD reviewer's refuted non-finding into a real test (every shipped states fragment passes Layer-1 at assembly). Re-ran green: **1015 passing, 1 skipped.** **Stage 5.5g marked DONE-HERE; the full [HARDWARE] acceptance run — create→avatar→reference→bootstrap(cancel)→approve→train(cancel; hard-kill→reap)→catalog→matte(place BiRefNet; confirm `escalated>0` + the bust pane gone)→novel pose→composite, entirely from the window, + the 5.5b chunking A/B + the 3c recall/purge drills — remains on the RTX 4070 Super 12 GB target and clears the pending 5.5a / 5.5b / 5.5d / 3f-escalation flags, completing Stage 5.5.**
+- *(Stage 5.5 acceptance run + session-5 fixes — 2026-07-14)* **The first user-driven [HARDWARE] acceptance run + every finding root-caused and fixed. Machine fact corrected: the workspace machine IS the RTX 4070 Super 12 GB target** (CUDA live, weights placed except BiRefNet) — [HARDWARE] validation now runs in-workspace. **The run** (all evidence from its own artifacts — `data/jobs/*.json`, `data/characters/*/bootstrap/bootstrap.json`, `data/logs/audit-20260714.jsonl`): create → avatar (image quality user-approved) → reference → 4×64-frame bootstraps (~14 min each) → confirm (10–12) → train-start, **then stalled**: the user could never assemble the 15-image floor and perceived cancel as dead. **Root causes (forensic, then explored to file:line):** (1) **cancel WORKED at the job layer** — two bootstrap cancels landed in 16/31 s, a train `Popen.terminate` in 50 s — but `jobs.js ctl.cancel` `clearTimeout`ed the only scheduled poll continuation and never rescheduled, so the promise never resolved, "Cancelled." never rendered, and `busy` never cleared; (2) **the vetted-floor deadlock** — `cull_and_rank` marked only the top `grid_size=12` PROPOSED, the UI renders only PROPOSED, `confirm_vetted` accepts the hidden KEPT survivors but they were never shown → **12 < floor 15 made the window structurally unable to reach the training floor**; (3) **face_area_min 0.04 rejected 53/64** real candidates as bare "rejected_quality" — the persisted readings show every one sharp (min 294 vs floor 100), confident (det 0.869 vs 0.5), single-face, at 0.0205–0.0483 face-area (full-body-ish compositions; the floor sliced the distribution's middle; CCIP embeds the whole character so the ArcFace-era assumption is stale); (4) **bootstrap-more replaced** — the UI keyed `more:true` off `proposed.length`, which a confirm empties → the next click sent `more:false` → `clear_bootstrap` wiped the set (one 128-frame union run proved the append path worked when hit); the union re-cull also demoted prior CONFIRMED candidates; (5) segmented widgets showed **no selected state** — `.seg-row .opt` (app.css:449) outranked `.opt.on` (:227) at equal specificity by source order, and no `.seg-row .opt.on` rule existed (gender presentation + every anatomy single-select); (6) name/age missing the required `*` (identityCard passed no required flag); (7) the prompt panel **dead during create** (`image_prompt_preview` needs a saved id); (8) create **duplicated records** on re-click and offered no save-while-working (the success path never adopted edit mode); (9) avatar candidates unjudgeable at hard-coded 256 px, no enlarge, no labeled re-roll. **Fixes (all [HERE], suite 1030 passing, 1 skipped, +15):** jobs.js cancel keeps the poll chain alive + nudges an immediate poll; `cull_and_rank` proposes ALL survivors up to `keep_cap=30` (now enforced; `grid_size` retired as a cap, parsed for compat); `face_area_min` 0.04→0.02 in code + settings defaults **with the evidence cited in the comments**; every rejecting gate names itself (`CandidateScore.reason` → persisted in the manifest `quality` dict → `reasons` tallies in `bootstrap_generate`/`bootstrap_recull` results, `bootstrap_status`, the audit event, and a UI summary line: "64 candidates · 26 proposed · 53 rejected — face too small 53"); the promotion panel accumulates whenever candidates exist (Discard stays the explicit reset), gains a batch input (1–256) + determinate progress (total=batch); the CPU cull phase checks the job token between candidates (`current_token()` None → pass-through; orphans are reconcile territory); `_cull_to_manifest` preserves CONFIRMED for vetted-manifest members; `.seg-row .opt.on` CSS; name/age required markers; **create adopts edit mode on success** (button flips to "Save changes", saves route through `library_update` — duplicates impossible, save-while-working free); a **live prompt preview during create** — new `creator_prompt_preview(payload)` bridge → `CreatorService.preview_record` (transient record; placeholder name; `required_groups=()` so partial forms preview; age + Layer-1 gates STILL run; blocks audited under `creator.preview.*`; nothing persisted) → `ImageService.preview_record_prompt`, debounced in creator.js via form-root event delegation with an out-of-order-response guard; avatar/vetted tiles at 512/320 px + a 1024-px zoom overlay (px-keyed thumb cache) + "Re-roll candidates"; the below-floor confirm message now says training still works. A raw prompt-edit box was **declined** (§10 structured-input stance — the live preview + record editing is the sanctioned loop). **Validated against the run's real data:** `bootstrap_recull` of the same 64 on-disk candidates — before: 11 proposed, short=true (settings still pinned 0.04: the recull's own `reasons` named `face_too_small: 53`, confirming the diagnosis live); after migrating the user's persisted settings.json to 0.02: **26 proposed + 27 kept + 11 confirmed — 64/64 survive, short=false** — the deadlock is gone and the vetted 11 stayed confirmed through the union re-cull. **Also this session:** user feedback ("height markers should be species-relative", "free text should be tag trees", "how does the prompt scale?") arrived as the user-authored **`CHARACTER_VOCABULARY_V2.md`** — planned into the spine as **Stage 5.6 — Character Vocabulary V2 (5.6a–5.6e)** (fifth §15 extension `visible_when`/`class`/`tier` + gated files, assembler tier ordering with the P0+P1-first-window contract, A/B then C/D data authoring, the user-approved DECISIONS §12 slider-amendment, a [HARDWARE] render pass), preceding Stage 6; its two decision reopenings (Stage-6 vocabulary deferral, §12 slider carve-out) are user-directed and recorded. The scaling question is answered in-plan: 5.5b chunking drops nothing; V2's tier contract keeps P0+P1 identity in the pooled first window. **REMAINING:** the acceptance re-run (bootstrap → confirm 15–30 → train to completion → catalog → matte → pose → composite + the 5.5b A/B + the 3c drills; 3f escalation needs BiRefNet placed) — it clears the 5.5a reap leg, 5.5b, 5.5d, and 3f-escalation flags and completes Stage 5.5.
+- *(Session-5 verification — 2026-07-14)* Two adversarial review agents (red-team with executed probes + correctness/scope) over the session-5 diff, findings re-executed skeptically; **every surviving finding fixed + regression-tested, final suite 1033 passing, 1 skipped**. **HIGH (correctness F1, independently proven by a red-team probe):** the CONFIRMED-preservation fix made prior vetted picks invisible AND non-reconfirmable (`CONFIRMED ∉ CONFIRMABLE_STATUSES`) while `confirm_vetted` REPLACES the vetted dir — a second confirm after generate-more **silently dropped the first training picks** and left `counts.confirmed` contradicting `vetted_count`. Fixed the visible-replace way: CONFIRMED joins `CONFIRMABLE_STATUSES`, confirmed candidates ride the grid payloads flagged `confirmed:true`, profile.js pre-checks them (a later confirm keeps them by default; unchecking is the deliberate removal) + a "vetted" badge; regression `test_reconfirm_union_keeps_prior_vetted` (confirm 2 → more → confirm union → vetted_count 4, halves agree). **MEDIUM (red-team probe):** `bootstrap_recull(id, {"keep_cap": 0})` bypassed the settings-coercion guard through `_apply_overrides` and proposed nothing — the deadlock class through the bridge; the override path now honors the same guards (non-positive → incoming config; cap ≥ floor), regression-tested. **MEDIUM (correctness F3):** create-adopts-edit left a quick create locked to the quick form with the mode toggle disabled — now forces detailed like `beginEdit`. **LOWs, all fixed:** jobs.js `poll()` nulls its timer on entry (the pollNow idle-guard is now real — cancel during an in-flight poll no longer spawns a second chain, confirmed by the reviewer's Node simulation); a corrupt vetted.json in the new cull-time `load_vetted` degrades to no-preservation instead of raising through the recull bridge (probe-confirmed structured); `resetForm` with a null adopted snapshot refuses instead of leaving a blank form bound to `library_update`; the LoRA branch gained its promised Discard button; `cullSummary` no longer double-counts confirmed inside "proposed". **Fail-closed confirmed intact by both reviewers:** a vetted member that NOW fails the content re-screen stays rejected/purged (preservation skips rejected scores — probe-confirmed); the preview path persists nothing under a 30-shape payload fuzz (structured dicts only, strict-JSON-safe, gates live, blocks audited); the persisting create/update paths still gate the full required set. Accepted residuals (documented): a refresh re-checks confirmed tiles (fails toward keeping — safe); a confirmed tile whose bootstrap frame was hand-deleted structurally fails the confirm until unchecked; the pre-existing (unchanged) fact that a content-re-screen rejection does not purge the already-copied `vetted/` files until re-confirm/discard.
+- *(Stage 5.5 CLOSURE — 2026-07-15)* **The acceptance re-run PASSED; Stage 5.5 is COMPLETE.** User-confirmed ("everything worked very well") and evidence-verified from the day's audit + manifests: a fresh character driven **entirely from the window** — created → avatar candidates → reference → one determinate bootstrap (done 64/total 64) → **30 vetted confirmed** (the enforced keep_cap; the pre-fix ceiling was 11) → **LoRA trained to completion as a job** (`lora_trained`) → 20-frame catalog → **20/20 matted** → on-demand poses cached → identity render; composites proven 2026-07-14. **The 3f BiRefNet escalation fired on real data**: `birefnet-general.onnx` placed, `manifest.matting.escalated: 3` on the prior character's busts (0 on the new catalog — correct coverage routing), provenance recorded. Flags cleared: **5.5a** (cancel legs 16/31/50 s + train-to-completion; the never-drilled hard-kill reap noted, not blocking — the sweep is [HERE]-tested and boots daily), **5.5d**, **3f-escalation**. Carried to the **5.6e hardware pass** (user-directed, non-blocking): the explicit 5.5b chunking A/B and the 3c minor-appearance recall + blocked-frame purge drills. The user flags further refinements before Stage 6 — Stage 5.6 (Character Vocabulary V2) is the vehicle. `data/jobs/` added to .gitignore (runtime job records, reaped at boot). **Next: Stage 5.6a — the §15 fifth format extension.**

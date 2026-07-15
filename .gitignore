@@ -17,3 +17,5 @@ data/characters/
 # scene backgrounds) — user data produced by the app, like data/characters/.
 # The BUNDLED builder option files live under app/data/builders/ and ARE tracked.
 data/builders/
+# Runtime job records (Stage 5.5a: data/jobs/<job_id>.json, reaped at boot).
+data/jobs/

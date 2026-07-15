@@ -330,6 +330,17 @@ class ImageService:
         return {"ok": True, "id": loaded.id, "has_reference": has_reference,
                 "tokens": self._token_report(assembled), **assembled.to_dict()}
 
+    def preview_record_prompt(self, record) -> dict:
+        """preview_prompt for a TRANSIENT (unsaved) record — the live creator
+        panel during create (5.5). Same assembly, same Layer-1 gating, same
+        token report; no disk involved. The record comes from
+        CreatorService.preview_record, never from caller-shaped input."""
+        assembled = self._assemble(record)
+        if isinstance(assembled, dict):
+            return assembled
+        return {"ok": True, "id": None, "preview": True, "has_reference": False,
+                "tokens": self._token_report(assembled), **assembled.to_dict()}
+
     def _token_report(self, assembled: AssembledPrompt) -> dict:
         """CLIP-token accounting for the assembled prompt (Stage 5.5b), backed by
         the model's own tokenizer. Structured ``available: False`` when the
@@ -722,19 +733,32 @@ class ImageService:
                     "proposed": [], "short": True, "has_reference": bool(
                         record.identity.reference_image_path),
                     "has_vetted": has_vetted, "vetted_count": vetted_count}
+        # CONFIRMED candidates ride the grid too (flagged) — visible,
+        # pre-checked, and re-confirmable, so a later confirm keeps them by
+        # default instead of silently shrinking the vetted set (5.5 F1).
         proposed = sorted(
-            [c for c in manifest.candidates if c.status == STATUS_PROPOSED],
+            [c for c in manifest.candidates
+             if c.status in (STATUS_PROPOSED, STATUS_CONFIRMED)],
             key=lambda c: (c.rank if c.rank is not None else 1_000_000),
         )
         config = self._bootstrap_config()
         kept = sum(1 for c in manifest.candidates
                    if c.status in (STATUS_KEPT, STATUS_PROPOSED))
+        # Per-gate rejection tally from the persisted readings (5.5
+        # diagnosability — the UI names the gate, not just "quality").
+        reasons: dict[str, int] = {}
+        for c in manifest.candidates:
+            reason = (c.quality or {}).get("reason")
+            if reason and c.status.startswith("rejected_"):
+                reasons[str(reason)] = reasons.get(str(reason), 0) + 1
         return {
             "ok": True, "id": record.id, "phase": manifest.phase,
             "counts": manifest.counts_by_status(),
+            "reasons": reasons,
             "proposed": [
                 {"candidate_id": c.candidate_id, "path": c.final_path(),
-                 "similarity": c.similarity, "rank": c.rank}
+                 "similarity": c.similarity, "rank": c.rank,
+                 "confirmed": c.status == STATUS_CONFIRMED}
                 for c in proposed
             ],
             "short": kept < config.floor,
@@ -964,10 +988,18 @@ class ImageService:
                         "error": f"{key} must be finite"}
             current[key] = value
         int_keys = ("batch", "keep_cap", "floor", "grid_size")
-        return CullConfig(
+        built = CullConfig(
             **{k: (int(current[k]) if k in int_keys else current[k])
                for k in current}
         )
+        # The override path must honor the same contradiction guards as the
+        # settings coercion (session-5 red-team: a recull override of
+        # keep_cap=0 proposed NOTHING, resurrecting the grid<floor deadlock
+        # through the bridge). Non-positive counts fall back to the incoming
+        # config; the cap never sits below the floor.
+        floor = built.floor if built.floor > 0 else config.floor
+        keep_cap = built.keep_cap if built.keep_cap > 0 else config.keep_cap
+        return replace(built, floor=floor, keep_cap=max(keep_cap, floor))
 
     @staticmethod
     def _cull_missing_message(kind: str) -> str:
@@ -1079,10 +1111,22 @@ class ImageService:
             return {"ok": False, "kind": "no_faces",
                     "error": "the reference image has no detectable face"}
 
+        # 5.5: the CPU cull is minutes on a big batch — make it cooperative so
+        # a job cancel lands between candidates rather than after the whole
+        # pass. current_token() is None outside a job (main thread, tests,
+        # harness) -> pure pass-through, byte-identical behavior.
+        from ..jobs import current_token
+
+        token = current_token()
         try:
             by_id = {f.candidate_id: f for f in frames}
             scores = []
             for frame in frames:
+                if token is not None:
+                    # JobCancelled unwinds to the worker; scored-but-unsaved
+                    # candidates stay on disk and the Stage-4 reconcile sweep
+                    # owns any orphans (same posture as a mid-generation kill).
+                    token.raise_if_cancelled()
                 score = cull_mod.score_candidate(
                     toolkit, toolkit.ref_reading, frame.candidate_id,
                     frame.abs_path, config)
@@ -1097,6 +1141,24 @@ class ImageService:
                     self._delete_quietly(frame.abs_path)
                 scores.append(score)
             survivors, short = cull_mod.cull_and_rank(scores, config)
+            # A union re-cull (more=True after a confirm) must not demote the
+            # already-vetted candidates back to KEPT/PROPOSED — the vetted
+            # manifest is the confirmation's source of truth, so its members
+            # keep CONFIRMED in the bootstrap grid (5.5 acceptance fix).
+            try:
+                vetted = self._store.load_vetted(record.id)
+            except ARTIFACT_LOAD_ERRORS:
+                # A corrupt/hand-edited vetted.json must not abort the cull —
+                # preservation degrades to "nothing preserved" (the re-cull
+                # itself is unaffected; confirm_vetted's own guarded loader
+                # reports the corruption on its path).
+                vetted = None
+            vetted_ids = ({e.source_candidate_id for e in vetted.entries}
+                          if vetted is not None else set())
+            if vetted_ids:
+                for score in scores:
+                    if score.candidate_id in vetted_ids and not score.rejected:
+                        score.status = STATUS_CONFIRMED
             swapped_paths = self._apply_face_swap(
                 record, toolkit, config, ref_abs, survivors, by_id)
         finally:
@@ -1128,19 +1190,29 @@ class ImageService:
             return {"ok": False, "kind": "io",
                     "error": f"could not save the bootstrap manifest: {exc}"}
         counts = manifest.counts_by_status()
+        # Per-gate rejection tally (5.5 diagnosability: "rejected_quality: 53"
+        # hid a face_area miscalibration; name the gate so floors are tunable).
+        reasons: dict[str, int] = {}
+        for s in scores:
+            if s.reason:
+                reasons[s.reason] = reasons.get(s.reason, 0) + 1
         self._audit.log(event, character_id=record.id,
-                        generated=len(frames), counts=counts, short=short)
+                        generated=len(frames), counts=counts, reasons=reasons,
+                        short=short)
         return {
             "ok": True, "id": record.id, "phase": manifest.phase,
-            "generated": len(frames), "counts": counts, "short": short,
+            "generated": len(frames), "counts": counts, "reasons": reasons,
+            "short": short,
             "proposed": [
                 {"candidate_id": c.candidate_id, "path": c.final_path(),
-                 "similarity": c.similarity, "rank": c.rank}
+                 "similarity": c.similarity, "rank": c.rank,
+                 "confirmed": c.status == STATUS_CONFIRMED}
                 for c in sorted(
-                    (c for c in manifest.candidates if c.status == STATUS_PROPOSED),
+                    (c for c in manifest.candidates
+                     if c.status in (STATUS_PROPOSED, STATUS_CONFIRMED)),
                     key=lambda c: (c.rank if c.rank is not None else 1_000_000))
             ],
-            "has_vetted": self._store.load_vetted(record.id) is not None,
+            "has_vetted": vetted is not None,
         }
 
     def _apply_face_swap(self, record, toolkit, config, ref_abs, survivors, by_id):

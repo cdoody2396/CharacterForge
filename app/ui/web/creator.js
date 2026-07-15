@@ -360,7 +360,7 @@ window.Creator = (function () {
     card.appendChild(el("h2", null, "Who"));
     const grid = el("div", "grid2");
 
-    const nameWrap = fieldWrap("name", "Name");
+    const nameWrap = fieldWrap("name", "Name", null, true);
     const nameInput = el("input");
     nameInput.type = "text";
     nameInput.maxLength = catalog.name_max_len || 120;
@@ -378,7 +378,7 @@ window.Creator = (function () {
     const age = ageGroup();
     const min = age?.min ?? catalog.min_age;
     const max = age?.max ?? catalog.max_age;
-    const ageWrap = fieldWrap("age", `Age (${min}+)`);
+    const ageWrap = fieldWrap("age", `Age (${min}+)`, null, true);
     const ageInput = el("input");
     ageInput.type = "number";
     ageInput.min = min;
@@ -494,8 +494,8 @@ window.Creator = (function () {
     panel.textContent = "";
     panel.appendChild(el("h2", null, "Prompt preview"));
     panel.appendChild(el("p", "hint", message ||
-      "Save the character to see the assembled image prompt, its fragments, " +
-      "and the CLIP token budget."));
+      "Pick options to see the assembled image prompt, its fragments, and " +
+      "the CLIP token budget — live, before anything is saved."));
   }
 
   async function refreshPromptPanel(id) {
@@ -512,6 +512,46 @@ window.Creator = (function () {
     if (!res || !res.ok) {
       clearPromptPanel("Prompt preview unavailable" +
         (res && (res.error || res.kind) ? `: ${res.error || res.kind}` : "."));
+      return;
+    }
+    renderPromptPanel(res);
+  }
+
+  // Live preview of the IN-PROGRESS form (5.5 acceptance fix: the panel was
+  // dead until the first save — "Save the character to see" with only a
+  // Create button). Debounced; a sequence counter drops out-of-order
+  // responses. Nothing is persisted; partial forms preview (the backend
+  // builds a transient record with the required-selection gate off, every
+  // other gate on).
+  let previewTimer = null;
+  let previewSeq = 0;
+  function schedulePromptPreview() {
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = setTimeout(previewFromForm, 400);
+  }
+
+  async function previewFromForm() {
+    previewTimer = null;
+    const panel = $("creator-prompt");
+    if (!panel || !catalog) return;
+    const seq = ++previewSeq;
+    let res;
+    try {
+      res = await window.pywebview.api.creator_prompt_preview(buildPayload());
+    } catch (err) {
+      res = { ok: false, error: String(err) };
+    }
+    if (seq !== previewSeq) return; // a newer preview superseded this one
+    if (!res || !res.ok) {
+      if (res && res.kind === "age") {
+        clearPromptPanel("Set a valid age to preview the prompt.");
+      } else if (res && res.kind === "blocked") {
+        clearPromptPanel("Prompt blocked by the content policy" +
+          (res.category ? ` (${res.category})` : "") + " — adjust the field.");
+      } else {
+        clearPromptPanel("Prompt preview unavailable" +
+          (res && (res.error || res.kind) ? `: ${res.error || res.kind}` : "."));
+      }
       return;
     }
     renderPromptPanel(res);
@@ -750,7 +790,7 @@ window.Creator = (function () {
   function renderCreateCandidates(id, cands, gridArea, wrap) {
     gridArea.textContent = "";
     gridArea.appendChild(el("div", "field-label", "Pick one as the reference:"));
-    const grid = el("div", "pf-grid");
+    const grid = el("div", "pf-grid wide");
     for (const c of cands) {
       const cell = el("button", "pf-grid-cell");
       cell.type = "button";
@@ -758,8 +798,9 @@ window.Creator = (function () {
       img.hidden = true;
       img.alt = "";
       cell.appendChild(img);
-      // CSP forbids disk paths — fetch a data-URI thumbnail for each candidate.
-      window.pywebview.api.image_frame_thumbnail(id, c.path, 256)
+      // CSP forbids disk paths — fetch a data-URI thumbnail for each
+      // candidate (512: 256 was too small to judge identity on, 5.5).
+      window.pywebview.api.image_frame_thumbnail(id, c.path, 512)
         .then((r) => {
           if (r && r.ok && r.thumbnail) { img.src = r.thumbnail; img.hidden = false; }
         })
@@ -910,7 +951,26 @@ window.Creator = (function () {
         } catch (_) { /* keep the old snapshot */ }
       } else {
         feedback.textContent =
-          `Created “${res.name}” (${res.mode}) — saved as ${res.id.slice(0, 8)}…`;
+          `Created “${res.name}” (${res.mode}) — saved as ${res.id.slice(0, 8)}…` +
+          " Further saves update this character.";
+        // 5.5 acceptance fix: ADOPT EDIT MODE on the new record. The old path
+        // stayed in create mode, so the button still read "Create character"
+        // and a second click made a DUPLICATE library record; there was also
+        // no way to keep saving while working. From here on, saves route
+        // through library_update on this id (the beginEdit machinery).
+        editing = { id: res.id, name: res.name, snapshot: null };
+        try {
+          const fresh = await window.pywebview.api.library_get(res.id);
+          if (fresh.ok) editing.snapshot = fresh;
+        } catch (_) { /* revert snapshot stays unavailable; saves still work */ }
+        // Like beginEdit: edits always see the FULL form — applyChrome
+        // disables the mode toggle, so a quick create must not stay locked
+        // to the quick subset (session-5 review F3).
+        mode = "detailed";
+        for (const btn of $("mode-toggle").children)
+          btn.classList.toggle("on", btn.dataset.mode === "detailed");
+        applyChrome();
+        render();
         // The create wizard's final, optional step: offer a reference image.
         showCreateReferenceStep(res.id, res.name);
       }
@@ -930,6 +990,16 @@ window.Creator = (function () {
       $("create-feedback").className = "feedback";
       $("create-feedback").textContent = "Reverted to the saved values.";
       if (catalog) render();
+      return;
+    }
+    if (editing) {
+      // Adopted-edit with no snapshot (the post-create library_get failed):
+      // blanking the form here would leave an EMPTY form still bound to
+      // library_update — the next save would wipe the just-created record.
+      $("create-feedback").className = "feedback error";
+      $("create-feedback").textContent =
+        "Nothing to revert to — the saved record could not be reloaded. " +
+        "Reopen it from the Library to start over.";
       return;
     }
     state.name = "";
@@ -1027,7 +1097,9 @@ window.Creator = (function () {
         startPromise = null;
       }
       render();
-      if (!editing) clearPromptPanel();
+      // A fresh form previews immediately (age defaults on first render) —
+      // the panel is live from the first interaction, not from the first save.
+      if (!editing) schedulePromptPreview();
     })();
     return startPromise;
   }
@@ -1038,6 +1110,11 @@ window.Creator = (function () {
     btn.addEventListener("click", () => setMode(btn.dataset.mode));
   setMode("quick"); // sets the hint text before first catalog load
   $("create-save").addEventListener("click", save);
+  // Live prompt preview: every form interaction (widget click, slider drag,
+  // text input) schedules a debounced re-preview of the in-progress payload.
+  // Delegated on the form root so dynamically-rendered widgets are covered.
+  for (const evt of ["click", "input", "change"])
+    $("creator-form").addEventListener(evt, schedulePromptPreview);
   $("creator-reset").addEventListener("click", resetForm);
   $("creator-cancel-edit").addEventListener("click", () => endEdit(true));
   $("creator-reload").addEventListener("click", () => {
@@ -1048,7 +1125,7 @@ window.Creator = (function () {
   // button, 5.5f).
   function beginCreate() {
     if (editing) endEdit(false);
-    else { resetForm(); clearPromptPanel(); }
+    else { resetForm(); schedulePromptPreview(); }
     ensureStarted();
   }
 

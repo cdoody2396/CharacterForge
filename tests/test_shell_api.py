@@ -162,6 +162,39 @@ def test_image_prompt_preview_via_bridge(api):
     assert res["tokens"]["available"] is False
 
 
+def test_creator_prompt_preview_partial_form(api, creator):
+    # 5.5: the live panel previews the IN-PROGRESS form — a partial payload
+    # (no name, only one selection, nothing near the required set) assembles;
+    # NOTHING is persisted.
+    before = len(creator.store.list_ids())
+    res = api.creator_prompt_preview({
+        "mode": "detailed", "age": 25,
+        "selections": {"race": "elf"}, "tags": {}, "sliders": {},
+        "free_text": {},
+    })
+    assert res["ok"] is True and res.get("preview") is True
+    assert "elf, pointed ears" in res["positive"]
+    assert "loli" in res["negative"]          # Layer-2 negatives unchanged
+    assert res["id"] is None                  # transient — no record id
+    assert len(creator.store.list_ids()) == before  # nothing saved
+
+
+def test_creator_prompt_preview_gates_still_run(api, creator):
+    # the required-selection gate is OFF for preview, but age (Layer 3) and
+    # the Layer-1 content gates are NOT.
+    res = api.creator_prompt_preview({"age": 17, "selections": {"race": "elf"}})
+    assert res["ok"] is False and res["kind"] == "age"
+    res2 = api.creator_prompt_preview({
+        "age": 25, "selections": {"race": "elf"},
+        "free_text": {"appearance_notes": "a young loli girl"},
+    })
+    assert res2["ok"] is False and res2["kind"] == "blocked"
+    before = len(creator.store.list_ids())
+    res3 = api.creator_prompt_preview("not a dict")
+    assert res3["ok"] is False and res3["kind"] == "invalid"
+    assert len(creator.store.list_ids()) == before
+
+
 def test_image_generate_base_via_bridge_reports_engine_unavailable(api):
     created = make_char(api, "Render Probe Two")
     res = api.image_generate_base(created["id"])

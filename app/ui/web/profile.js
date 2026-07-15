@@ -30,6 +30,7 @@ window.Profile = (function () {
   let lastRender = null;    // {label, path} of the most recent identity/pose frame
   let candidates = null;    // avatar-candidate frames awaiting a reference pick
   let identityScale = 0.45; // 3b plus-band default (0.3–0.6)
+  let bootBatch = 64;       // bootstrap batch size (backend clamps [1, 256])
   let feedbackMsg = null;   // {text, isError} — survives a full re-render
   const thumbCache = new Map();     // path -> data URI | null
 
@@ -57,16 +58,20 @@ window.Profile = (function () {
   }
 
   // Lazily fetch + cache a data-URI thumbnail for a character-owned frame.
+  // Cache key includes the size: the same frame is requested small in a grid
+  // and large in the zoom overlay, and the two must not collide.
   async function loadThumb(path, img, px) {
     if (!path) return;
-    if (thumbCache.has(path)) {
-      const uri = thumbCache.get(path);
+    const size = px || 384;
+    const key = path + "@" + size;
+    if (thumbCache.has(key)) {
+      const uri = thumbCache.get(key);
       if (uri) { img.src = uri; img.hidden = false; }
       return;
     }
-    const res = await call("image_frame_thumbnail", cid, path, px || 384);
+    const res = await call("image_frame_thumbnail", cid, path, size);
     const uri = res && res.ok ? res.thumbnail : null;
-    thumbCache.set(path, uri);
+    thumbCache.set(key, uri);
     if (uri) { img.src = uri; img.hidden = false; }
   }
 
@@ -78,6 +83,38 @@ window.Profile = (function () {
     tile.appendChild(img);
     loadThumb(path, img, px);
     return tile;
+  }
+
+  // Full-size preview overlay (5.5 acceptance: 256 px tiles were too small to
+  // judge identity on). Click anywhere / Esc to dismiss.
+  function zoomOverlay(path) {
+    const overlay = el("div", "pf-zoom");
+    const img = el("img");
+    img.hidden = true;
+    img.alt = "";
+    overlay.appendChild(img);
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey);
+    };
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    overlay.addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(overlay);
+    loadThumb(path, img, 1024);
+  }
+
+  // A small magnifier riding a grid cell — opens the zoom overlay WITHOUT
+  // triggering the cell's own click action (pick / toggle).
+  function zoomButton(path) {
+    const z = el("button", "pf-zoom-btn", "⤢");
+    z.type = "button";
+    z.title = "View full size";
+    z.addEventListener("click", (e) => {
+      e.stopPropagation();
+      zoomOverlay(path);
+    });
+    return z;
   }
 
   // ------------------------------------------------------------- data load
@@ -96,10 +133,16 @@ window.Profile = (function () {
         call("image_catalog_states", cid),
       ]);
     data = { record, reference, lora, boot, catalog, matte, cache, states };
-    // prune vet selection to still-proposed candidates
+    // prune vet selection to still-in-grid candidates
     const proposed = new Set(
       (boot.ok ? boot.proposed || [] : []).map((c) => c.candidate_id));
     for (const id of [...vetSelection]) if (!proposed.has(id)) vetSelection.delete(id);
+    // Already-vetted candidates arrive flagged and PRE-CHECKED: confirm
+    // REPLACES the vetted set, so keeping them selected by default means a
+    // later confirm can only shrink the set when the user UNchecks (5.5 F1 —
+    // prior picks were silently dropped).
+    for (const c of (boot.ok ? boot.proposed || [] : []))
+      if (c.confirmed) vetSelection.add(c.candidate_id);
     // default the pose picker to the first of each dimension
     if (states.ok) {
       if (!pose.expression && states.expressions[0])
@@ -286,14 +329,20 @@ window.Profile = (function () {
       hasRef ? "Reference set." : "No identity reference yet."));
 
     const row = el("div", "pf-btn-row");
-    // Avatar candidates (base job): the create-wizard reference step, also here.
-    row.appendChild(jobButton("Generate avatar candidates", {
+    // Avatar candidates (base job): the create-wizard reference step, also
+    // here. A repeat click is a re-roll — fresh seeds, same record prompt
+    // (edit the character to change the prompt; the live preview shows it).
+    row.appendChild(jobButton(
+      candidates && candidates.length
+        ? "Re-roll candidates" : "Generate avatar candidates", {
       kind: "avatar", options: { count: 4 }, label: "Avatar candidates",
       onDone: (st) => {
         candidates = (window.Jobs.isSuccess(st) && st.result.candidates) || null;
       },
     }, { accent: !hasRef,
-         title: "Render base candidates; pick one as the reference" }));
+         title: candidates && candidates.length
+           ? "Fresh seeds over the same record prompt"
+           : "Render base candidates; pick one as the reference" }));
 
     if (hasRef) {
       const clearBtn = el("button", "lib-btn ghost", "Clear reference");
@@ -312,13 +361,14 @@ window.Profile = (function () {
     if (candidates && candidates.length) {
       const box = el("div", "pf-candidates");
       box.appendChild(el("div", "field-label",
-        "Pick a candidate as the identity reference:"));
-      const grid = el("div", "pf-grid");
+        "Pick a candidate as the identity reference (⤢ views full size):"));
+      const grid = el("div", "pf-grid wide");
       for (const c of candidates) {
         const cell = el("button", "pf-grid-cell");
         cell.type = "button";
         cell.disabled = busy;
-        cell.appendChild(thumbTile(c.path, null, 256));
+        cell.appendChild(thumbTile(c.path, null, 512));
+        cell.appendChild(zoomButton(c.path));
         cell.addEventListener("click", () => act(async () => {
           const res = await call("image_set_reference", cid, c.path);
           if (res.ok) { candidates = null; feedback("Reference set from candidate."); }
@@ -391,9 +441,26 @@ window.Profile = (function () {
         `trigger ${lora.trigger || "?"} · ${prov.steps || "?"} steps · ` +
         `${fmtBytes(prov.lora_bytes || 0)}`));
       const row = el("div", "pf-btn-row");
+      // Accumulates like the main flow; Discard (here too, when a bootstrap
+      // exists) is the explicit fresh-start — without it, a fresh set would
+      // need Clear LoRA first (session-5 review F5).
       row.appendChild(jobButton("Re-bootstrap", {
-        kind: "bootstrap", options: {}, label: "Bootstrap",
+        kind: "bootstrap",
+        options: { batch: bootBatch, total: bootBatch,
+                   ...(boot.ok && boot.phase ? { more: true } : {}) },
+        label: "Bootstrap",
       }, { disabled: !hasRef, title: hasRef ? "" : "Set a reference first" }));
+      if (boot.ok && boot.phase) {
+        const discard = el("button", "lib-btn ghost", "Discard candidates");
+        discard.disabled = busy;
+        discard.addEventListener("click", () => act(async () => {
+          vetSelection.clear();
+          const res = await call("image_clear_bootstrap", cid, "all");
+          feedback(res.ok ? "Bootstrap candidates discarded." :
+            "Could not discard: " + (res.error || res.kind), !res.ok);
+        }));
+        row.appendChild(discard);
+      }
       row.appendChild(jobButton("Re-train LoRA", {
         kind: "train", options: {}, label: "Train LoRA",
       }));
@@ -417,11 +484,37 @@ window.Profile = (function () {
     }
     const row = el("div", "pf-btn-row");
     const proposed = boot.ok ? boot.proposed || [] : [];
+    // Accumulate whenever ANY bootstrap exists (5.5 acceptance fix: keying
+    // off proposed.length sent more:false after a confirm emptied the grid,
+    // silently WIPING the prior candidates). Discard is the explicit reset.
+    const hasCandidates = !!(boot.ok && boot.phase);
+    // Batch size — user-tunable so one run can net the whole training set
+    // ("is there any reason the number cannot be changed?" — no).
+    const batchWrap = el("label", "pf-batch");
+    batchWrap.appendChild(el("span", null, "Batch"));
+    const batchInput = el("input");
+    batchInput.type = "number";
+    batchInput.min = "1"; batchInput.max = "256"; batchInput.step = "1";
+    batchInput.value = String(bootBatch);
+    batchInput.disabled = busy;
+    batchInput.addEventListener("change", () => {
+      const v = Math.round(Number(batchInput.value));
+      bootBatch = Number.isFinite(v) ? Math.min(256, Math.max(1, v)) : 64;
+      batchInput.value = String(bootBatch);
+    });
+    batchWrap.appendChild(batchInput);
+    row.appendChild(batchWrap);
     row.appendChild(jobButton(
-      proposed.length ? "Bootstrap more candidates" : "Bootstrap candidates", {
-        kind: "bootstrap", options: proposed.length ? { more: true } : {},
+      hasCandidates ? "Generate more candidates" : "Bootstrap candidates", {
+        kind: "bootstrap",
+        // total makes the progress bar determinate (done/total frames).
+        options: { batch: bootBatch, total: bootBatch,
+                   ...(hasCandidates ? { more: true } : {}) },
         label: "Bootstrap",
-      }, { accent: !proposed.length }));
+      }, { accent: !proposed.length,
+           title: hasCandidates
+             ? "Adds a fresh batch to the existing candidates"
+             : "Generate and auto-filter a candidate batch" }));
     // A bootstrap exists → offer to re-cull it (no regeneration, §6) or discard.
     if (boot.ok && boot.phase) {
       const recull = el("button", "lib-btn", "Re-cull candidates");
@@ -456,14 +549,55 @@ window.Profile = (function () {
       p.appendChild(trainRow);
     }
 
+    // Cull summary — name the counts AND the rejecting gates (5.5
+    // diagnosability: "rejected_quality: 53" hid a face_area miscalibration).
+    if (boot.ok && boot.phase) {
+      p.appendChild(el("div", "lib-meta", cullSummary(boot, proposed)));
+    }
+
     if (proposed.length) {
       p.appendChild(vettedGrid(proposed, boot));
-    } else if (boot.ok && boot.phase) {
+    } else if (boot.ok && boot.phase &&
+               !Number((boot.counts || {}).confirmed || 0)) {
+      // Only when nothing survived at all — a fully-confirmed batch is not a
+      // failure (the summary line above already says "N confirmed").
       p.appendChild(el("div", "hint",
-        "No candidates passed the auto-filter — re-bootstrap (a fresh seed " +
-        "batch) or lower the thresholds on hardware."));
+        "No candidates passed the auto-filter — the summary above names the " +
+        "rejecting gates; generate more, or tune image_gen.bootstrap.* in " +
+        "Settings if one gate is doing all the damage."));
     }
     return p;
+  }
+
+  const REASON_LABELS = {
+    face_too_small: "face too small", face_too_large: "face too large",
+    blurry: "blurry", low_confidence: "low face confidence",
+    multi_face: "multiple faces", no_face: "no face",
+    off_identity: "off-identity", content: "content-blocked",
+    decode_error: "unreadable",
+  };
+
+  function cullSummary(boot, proposed) {
+    const counts = boot.counts || {};
+    const total = Object.values(counts).reduce(
+      (a, b) => a + (Number(b) || 0), 0);
+    const rejected = Object.entries(counts)
+      .filter(([k]) => k.startsWith("rejected_"))
+      .reduce((a, [, v]) => a + (Number(v) || 0), 0);
+    // the grid list carries confirmed tiles too (flagged) — count them in
+    // their own segment, not inside "proposed"
+    const confirmed = proposed.filter((c) => c.confirmed).length;
+    let line = `${total} candidate${total === 1 ? "" : "s"} · ` +
+      `${proposed.length - confirmed} proposed`;
+    if (confirmed) line += ` · ${confirmed} confirmed`;
+    if (rejected) {
+      const reasons = Object.entries(boot.reasons || {})
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${REASON_LABELS[k] || k} ${v}`)
+        .join(", ");
+      line += ` · ${rejected} rejected` + (reasons ? ` — ${reasons}` : "");
+    }
+    return line;
   }
 
   function vettedGrid(proposed, boot) {
@@ -500,7 +634,10 @@ window.Profile = (function () {
     for (const c of proposed) {
       const cell = el("div", "pf-grid-cell selectable" +
         (vetSelection.has(c.candidate_id) ? " on" : ""));
-      cell.appendChild(thumbTile(c.path, null, 256));
+      cell.appendChild(thumbTile(c.path, null, 320));
+      cell.appendChild(zoomButton(c.path));
+      if (c.confirmed)  // already in the vetted set; unchecking removes it
+        cell.appendChild(el("span", "pf-vetted-badge", "vetted"));
       if (typeof c.similarity === "number")
         cell.appendChild(el("span", "pf-sim", c.similarity.toFixed(2)));
       cell.addEventListener("click", () => {
@@ -517,8 +654,13 @@ window.Profile = (function () {
     confirm.addEventListener("click", () => act(async () => {
       const res = await call("image_confirm_vetted", cid, [...vetSelection]);
       if (res.ok) {
+        // The floor is a RECOMMENDATION (§6's ~15-30 band) — training runs
+        // below it (5.5: the old wording read as a hard block).
         feedback(`Confirmed ${res.count} — now train the LoRA.` +
-          (res.below_floor ? " (below the recommended minimum — add more.)" : ""));
+          (res.below_floor
+            ? " (Below the recommended 15 — training still works; more" +
+              " images strengthen identity.)"
+            : ""));
       } else {
         feedback("Could not confirm: " + (res.error || res.kind), true);
       }

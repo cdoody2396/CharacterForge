@@ -1742,6 +1742,118 @@ def test_bootstrap_recull_without_bootstrap(creator, settings, audit, fake_engin
     assert res["ok"] is False and res["kind"] == "no_bootstrap"
 
 
+def test_recull_override_cannot_resurrect_the_deadlock(creator, settings, audit,
+                                                       fake_engine, ip_adapter_dir,
+                                                       cull_models):
+    # session-5 red-team: an overrides={"keep_cap": 0} recull bypassed the
+    # settings-coercion guard and proposed NOTHING — the grid<floor deadlock
+    # through the bridge. The override path now honors the same guards.
+    factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = bootstrap_service(creator, settings, audit, fake_engine, factory)
+    record = _ready(service, creator, settings, ip_adapter_dir)
+    service.bootstrap_generate(record.id, batch=4)
+    res = service.bootstrap_recull(record.id, overrides={"keep_cap": 0})
+    assert res["ok"] is True
+    assert res["counts"].get("proposed") == 4        # non-positive -> incoming
+    res2 = service.bootstrap_recull(record.id, overrides={"keep_cap": 2,
+                                                          "floor": 15})
+    assert res2["ok"] is True
+    assert res2["counts"].get("proposed") == 4       # cap lifted to the floor
+
+
+def test_bootstrap_reasons_reported(creator, settings, audit, fake_engine,
+                                    ip_adapter_dir, cull_models):
+    # 5.5 diagnosability: the result AND the status name the rejecting gate,
+    # not just "rejected_quality" (the face_area miscalibration lesson).
+    factory = FakeToolkitFactory(outcomes=[
+        {"area": 0.001}, {"sharpness": 1.0}, {}, {}])
+    service = bootstrap_service(creator, settings, audit, fake_engine, factory)
+    record = _ready(service, creator, settings, ip_adapter_dir)
+    res = service.bootstrap_generate(record.id, batch=4)
+    assert res["ok"] is True
+    assert res["reasons"] == {"face_too_small": 1, "blurry": 1}
+    status = service.bootstrap_status(record.id)
+    assert status["reasons"] == {"face_too_small": 1, "blurry": 1}
+    # the per-candidate reason is persisted in the manifest readings
+    manifest = creator.store.load_bootstrap(record.id)
+    persisted = sorted((c.quality or {}).get("reason") or ""
+                       for c in manifest.candidates
+                       if c.status == "rejected_quality")
+    assert persisted == ["blurry", "face_too_small"]
+
+
+def test_union_recull_preserves_confirmed(creator, settings, audit, fake_engine,
+                                          ip_adapter_dir, cull_models):
+    # 5.5 acceptance fix: bootstrap-more re-culls the UNION, which used to
+    # demote already-vetted candidates back to KEPT/PROPOSED. The vetted
+    # manifest is the confirmation's source of truth — its members stay
+    # CONFIRMED in the rebuilt bootstrap manifest.
+    factory = FakeToolkitFactory(outcomes=[{}] * 8)
+    service = bootstrap_service(creator, settings, audit, fake_engine, factory)
+    record = _ready(service, creator, settings, ip_adapter_dir)
+    res = service.bootstrap_generate(record.id, batch=4)
+    picked = [c["candidate_id"] for c in res["proposed"][:2]]
+    assert service.confirm_vetted(record.id, picked)["ok"] is True
+
+    res2 = service.bootstrap_generate(record.id, batch=4, more=True)
+    assert res2["ok"] is True and res2["generated"] == 8
+    manifest = creator.store.load_bootstrap(record.id)
+    by_id = {c.candidate_id: c.status for c in manifest.candidates}
+    assert all(by_id[cid] == "confirmed" for cid in picked)
+    # confirmed ids RIDE the grid, flagged — visible, pre-checked by the UI,
+    # and re-confirmable (F1: confirm REPLACES the vetted set, so hiding them
+    # made the next confirm silently drop the prior picks)
+    flagged = {p["candidate_id"]: p["confirmed"] for p in res2["proposed"]}
+    assert all(flagged.get(cid) is True for cid in picked)
+    assert all(v is False for k, v in flagged.items() if k not in picked)
+
+
+def test_reconfirm_union_keeps_prior_vetted(creator, settings, audit,
+                                            fake_engine, ip_adapter_dir,
+                                            cull_models):
+    # F1 end-to-end: confirm 2 -> bootstrap more -> confirm the UNION (old 2 +
+    # new 2). The old picks stay confirmable and the vetted set GROWS — the
+    # counts and vetted_count agree.
+    factory = FakeToolkitFactory(outcomes=[{}] * 8)
+    service = bootstrap_service(creator, settings, audit, fake_engine, factory)
+    record = _ready(service, creator, settings, ip_adapter_dir)
+    res = service.bootstrap_generate(record.id, batch=4)
+    old = [c["candidate_id"] for c in res["proposed"][:2]]
+    assert service.confirm_vetted(record.id, old)["ok"] is True
+
+    res2 = service.bootstrap_generate(record.id, batch=4, more=True)
+    new = [c["candidate_id"] for c in res2["proposed"]
+           if not c["confirmed"]][:2]
+    res3 = service.confirm_vetted(record.id, old + new)
+    assert res3["ok"] is True and res3["count"] == 4
+    status = service.bootstrap_status(record.id)
+    assert status["vetted_count"] == 4
+    assert status["counts"].get("confirmed") == 4  # the two halves agree
+
+
+def test_cull_phase_is_cancellable(creator, settings, audit, fake_engine,
+                                   ip_adapter_dir, cull_models):
+    # 5.5 acceptance fix: a cancel during the CPU cull phase used to be a
+    # no-op until the whole pass finished. With a cancelled job token on the
+    # thread, the per-candidate loop raises JobCancelled (the worker's normal
+    # cancellation unwind). No token (every other test) = pass-through.
+    from app.jobs import CancelToken, JobCancelled, set_current_token
+
+    factory = FakeToolkitFactory(outcomes=[{}] * 4)
+    service = bootstrap_service(creator, settings, audit, fake_engine, factory)
+    record = _ready(service, creator, settings, ip_adapter_dir)
+    service.bootstrap_generate(record.id, batch=4)
+
+    token = CancelToken()
+    token.cancel()
+    set_current_token(token)
+    try:
+        with pytest.raises(JobCancelled):
+            service.bootstrap_recull(record.id)
+    finally:
+        set_current_token(None)
+
+
 # -- confirm_vetted ----------------------------------------------------------
 
 

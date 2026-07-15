@@ -30,6 +30,7 @@ window.Jobs = (function () {
     let jobId = null;
     let cancelled = false;
     let timer = null;
+    let pollNow = null;  // set once the poll loop exists; used by cancel
     const ctl = { jobId: null };
 
     ctl.promise = new Promise((resolve, reject) => {
@@ -54,6 +55,11 @@ window.Jobs = (function () {
           try { await window.pywebview.api.job_cancel(jobId); } catch (_) {}
         }
         const poll = async () => {
+          // Null the handle on entry: `timer` non-null now means exactly
+          // "idle in the timeout wait", which is the invariant pollNow's
+          // guard relies on (a stale fired handle would let cancel spawn a
+          // second concurrent poll chain alongside an in-flight await).
+          timer = null;
           let st;
           try { st = await window.pywebview.api.job_status(jobId); }
           catch (err) { reject(err); return; }
@@ -61,16 +67,26 @@ window.Jobs = (function () {
           if (TERMINAL.has(st.status)) { resolve(st); return; }
           timer = setTimeout(poll, POLL_MS);
         };
+        // Cancel must NEVER kill the poll chain: the promise resolves only
+        // when a poll observes the terminal (cancelled) record. Nudge one
+        // immediate poll ONLY when the loop is idle in its timeout wait —
+        // an in-flight poll (timer null) already reschedules itself, and
+        // starting a second chain would double-poll.
+        pollNow = () => {
+          if (timer) { clearTimeout(timer); timer = null; poll(); }
+        };
         poll();
       })();
     });
 
     ctl.cancel = async () => {
       cancelled = true;
-      if (timer) { clearTimeout(timer); timer = null; }
       if (jobId) {
-        try { return await window.pywebview.api.job_cancel(jobId); }
-        catch (_) { /* the poll will still resolve on the next tick */ }
+        try { await window.pywebview.api.job_cancel(jobId); } catch (_) {}
+        // The backend flips the record quickly (queued jobs immediately;
+        // running loops at the next frame boundary) — poll right away so
+        // "Cancelled." renders without waiting out the 1 Hz tick.
+        if (pollNow) pollNow();
       }
     };
     return ctl;

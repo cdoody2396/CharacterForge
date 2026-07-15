@@ -39,11 +39,15 @@ STATUS_REJECTED_CONTENT = "rejected_content"    # Layer-2 pixel block
 STATUS_REJECTED_QUALITY = "rejected_quality"
 STATUS_REJECTED_SIMILARITY = "rejected_similarity"
 STATUS_KEPT = "kept"
-STATUS_PROPOSED = "proposed"                     # kept AND in the ~12 grid
+STATUS_PROPOSED = "proposed"                     # kept AND in the confirmation grid
 STATUS_CONFIRMED = "confirmed"                    # promoted to the vetted set
 
-# Statuses a candidate may hold to be eligible for confirmation.
-CONFIRMABLE_STATUSES = (STATUS_PROPOSED, STATUS_KEPT)
+# Statuses a candidate may hold to be eligible for confirmation. CONFIRMED is
+# re-confirmable (5.5 session-5 review, F1): confirm_vetted REPLACES the vetted
+# set with the selection, and the grid shows confirmed candidates pre-checked —
+# so a later confirm keeps the prior picks by default instead of silently
+# dropping them (unchecking one is the deliberate way to remove it).
+CONFIRMABLE_STATUSES = (STATUS_PROPOSED, STATUS_KEPT, STATUS_CONFIRMED)
 
 
 def _now_iso() -> str:
