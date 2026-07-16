@@ -11,7 +11,7 @@ from app.ui.shell import WEB_DIR, Api
 # The render-identity minimum every character now needs (5.5c). Bridge setup
 # creates route through make_char() so a quick character constructs.
 SEL = {"race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
-       "hair_color": "black", "hair_style": "short", "eye_color": "brown",
+       "hair_color": "black", "hair_style": "bob", "eye_color": "brown",
        "body_type": "average"}
 
 

@@ -36,7 +36,7 @@ def audit_events(audit):
 
 # The render-identity minimum every character now needs (5.5c).
 SEL = {"race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
-       "hair_color": "black", "hair_style": "short", "eye_color": "brown",
+       "hair_color": "black", "hair_style": "bob", "eye_color": "brown",
        "body_type": "average"}
 
 
@@ -363,30 +363,30 @@ def test_list_recommendation_past_cache_threshold(creator, library, images,
 
 
 def test_list_returns_resolved_tag_labels(creator, library):
-    # 5.5e: library_list carries the character's multi-select tags (archetype /
-    # distinctive features / traits / wardrobe) resolved to human labels so the
-    # UI can filter on them.
+    # 5.5e: library_list carries the character's multi-select tags (wardrobe /
+    # marks / traits — 5.6c vocabulary) resolved to human labels so the UI can
+    # filter on them.
     cid = _create(creator)
     catalog = creator.catalog
     record = creator.store.load(cid)
-    record.tags = {"archetype": ["warrior", "mage"], "traits": ["witty"],
-                   "distinctive_features": ["freckles"]}
+    record.tags = {"outfit": ["gown", "kimono"], "traits": ["witty"],
+                   "marks": ["freckles"]}
     creator.store.save(record)
     row = next(r for r in library.list_characters()["characters"]
                if r["id"] == cid)
     tags = row["tags"]
-    for gid, oid in [("archetype", "warrior"), ("archetype", "mage"),
-                     ("traits", "witty"), ("distinctive_features", "freckles")]:
+    for gid, oid in [("outfit", "gown"), ("outfit", "kimono"),
+                     ("traits", "witty"), ("marks", "freckles")]:
         assert catalog.get(gid).get_option(oid).label in tags
     # deduped and stable
     assert len(tags) == len(set(tags))
     # an option id no longer in the catalog falls back to the raw id (the
     # record stays the source of truth, §15)
-    record.tags = {"archetype": ["removed_class"]}
+    record.tags = {"outfit": ["removed_outfit"]}
     creator.store.save(record)
     row = next(r for r in library.list_characters()["characters"]
                if r["id"] == cid)
-    assert row["tags"] == ["removed_class"]
+    assert row["tags"] == ["removed_outfit"]
 
 
 def test_list_identity_flags(creator, library):
@@ -465,7 +465,6 @@ def test_get_character_round_trips_form_fields(creator, library):
         "mode": "detailed", "name": "Edit Me", "age": 27,
         "selections": selections,
         "tags": {"traits": ["curious"]},
-        "sliders": {"height": 172},
         "free_text": {"backstory": "A quiet scholar of the old library."},
     })
     assert res["ok"] is True
@@ -474,7 +473,7 @@ def test_get_character_round_trips_form_fields(creator, library):
     assert got["name"] == "Edit Me" and got["age"] == 27
     assert got["selections"] == selections
     assert got["tags"] == {"traits": ["curious"]}
-    assert got["sliders"] == {"height": 172}
+    assert got["sliders"] == {}
     assert got["free_text"] == {
         "backstory": "A quiet scholar of the old library."}
     assert got["identity"] == {"has_lora": False, "has_reference": False}

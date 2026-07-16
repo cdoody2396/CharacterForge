@@ -1,0 +1,12 @@
+{
+  "groups": [
+    {
+      "id": "piercings",
+      "_note": "Gated extension fragment (V2 flag 7 / B46 note): appends gated placements to the bundled 'piercings' group. Options only - no scalar overrides.",
+      "options": [
+        { "id": "nipple", "label": "Nipple", "prompt": "nipple piercings" },
+        { "id": "genital", "label": "Genital", "prompt": "genital piercing" }
+      ]
+    }
+  ]
+}

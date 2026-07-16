@@ -1,0 +1,77 @@
+{
+  "groups": [
+    {
+      "id": "chest_shape",
+      "label": "Chest Shape",
+      "kind": "single",
+      "field": "chest_shape",
+      "region": "Chest",
+      "attribute": "Shape",
+      "order": 101,
+      "tier": "P2",
+      "visible_when": { "group": "chest_size", "in": ["small", "modest", "medium", "large", "very_large", "huge"] },
+      "_note": "V2 B48 (gated file - V2 flag 7). Condition: chest_size beyond flat; the 'gate open' half of the condition is structural (this file only loads with the gate open).",
+      "options": [
+        { "id": "natural", "label": "Natural", "prompt": "" },
+        { "id": "round", "label": "Round", "prompt": "round breasts" },
+        { "id": "teardrop", "label": "Teardrop", "prompt": "teardrop breasts" },
+        { "id": "perky", "label": "Perky", "prompt": "perky breasts" },
+        { "id": "athletic", "label": "Athletic", "prompt": "firm athletic chest" },
+        { "id": "heavy", "label": "Heavy", "prompt": "heavy breasts" }
+      ]
+    },
+    {
+      "id": "genitalia",
+      "label": "Configuration",
+      "kind": "single",
+      "field": "genitalia",
+      "region": "Genitalia",
+      "attribute": "Configuration",
+      "order": 106,
+      "tier": "P3",
+      "_note": "V2 B52 (replaces genital_config; legacy values load leniently and lint). Gated file - the ungated catalog structurally lacks this group.",
+      "options": [
+        { "id": "unspecified", "label": "Unspecified", "prompt": "" },
+        { "id": "vulva", "label": "Vulva", "prompt": "female anatomy" },
+        { "id": "penis", "label": "Penis", "prompt": "male anatomy" },
+        { "id": "both", "label": "Both", "prompt": "intersex anatomy" },
+        { "id": "none", "label": "None / Featureless", "prompt": "featureless, doll-like anatomy" }
+      ]
+    },
+    {
+      "id": "genitalia_size",
+      "label": "Size",
+      "kind": "single",
+      "field": "genitalia_size",
+      "region": "Genitalia",
+      "attribute": "Size",
+      "order": 107,
+      "tier": "P3",
+      "visible_when": { "group": "genitalia", "in": ["penis", "both"] },
+      "_note": "V2 B53 (replaces genital_size; legacy values load leniently and lint).",
+      "options": [
+        { "id": "small", "label": "Small", "prompt": "small" },
+        { "id": "average", "label": "Average", "prompt": "" },
+        { "id": "large", "label": "Large", "prompt": "large" },
+        { "id": "very_large", "label": "Very Large", "prompt": "very large" }
+      ]
+    },
+    {
+      "id": "grooming",
+      "label": "Grooming",
+      "kind": "single",
+      "field": "grooming",
+      "region": "Genitalia",
+      "attribute": "Grooming",
+      "order": 108,
+      "tier": "P3",
+      "_note": "V2 B54. Condition 'gate open' is structural - no visible_when needed; the group exists only while the gate is open.",
+      "options": [
+        { "id": "bare", "label": "Bare", "prompt": "hairless" },
+        { "id": "trimmed", "label": "Trimmed", "prompt": "trimmed pubic hair" },
+        { "id": "natural", "label": "Natural", "prompt": "" },
+        { "id": "styled", "label": "Styled", "prompt": "styled pubic hair" }
+      ]
+    }
+  ]
+}

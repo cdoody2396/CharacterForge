@@ -20,11 +20,17 @@ def write_options(path, groups):
 
 
 def test_bundled_catalog_loads_and_is_enumerable():
+    # 5.6c: the height/weight/muscle sliders are gone (V2 flag 3) — the V2
+    # replacements (height_band, muscle_def) and new groups load instead
     catalog = load_option_catalog()
     assert len(catalog) > 0
     ids = catalog.group_ids()
-    for expected in ("age", "race", "height", "weight", "muscle", "chest_size"):
+    for expected in ("age", "race", "height_band", "muscle_def", "hair_length",
+                     "ears", "chest_size", "marks", "aesthetic"):
         assert expected in ids, f"missing bundled group {expected!r}"
+    for gone in ("height", "weight", "muscle", "distinctive_features",
+                 "hip_size", "rear_size", "genital_config", "style"):
+        assert gone not in ids, f"retired group {gone!r} still bundled"
 
 
 def test_bundled_age_group_declares_twenty_floor():
@@ -35,10 +41,12 @@ def test_bundled_age_group_declares_twenty_floor():
     assert age.min == 20  # the creator floor mirrors the structural gate
 
 
-def test_reserved_sliders_are_numeric_others_are_not():
+def test_age_is_the_only_bundled_numeric_group():
+    # 5.6c: the numeric machinery stays dormant in the format (still guarding
+    # the reserved axes) but no bundled slider group remains except age
     catalog = load_option_catalog()
-    for gid in ("height", "weight", "muscle"):
-        assert catalog.get(gid).is_numeric
+    numeric = [g.id for g in catalog.groups() if g.is_numeric]
+    assert numeric == ["age"]
     assert not catalog.get("race").is_numeric
     assert catalog.get("race").is_selection
 
@@ -47,11 +55,21 @@ def test_anatomy_groups_carry_regions_for_progressive_disclosure():
     catalog = load_option_catalog()
     regions = catalog.by_region()
     assert "Chest" in regions
-    assert "Genitalia" in regions
+    assert "Hips & Rear" in regions
+    # the Genitalia region is gated (5.6c, V2 flag 7): structurally absent
+    # from the ungated catalog, present only with the gated dirs loaded
+    assert "Genitalia" not in regions
     # ungrouped (no region) groups bucket under None
     assert None in regions
     chest_group_ids = {g.id for g in regions["Chest"]}
     assert "chest_size" in chest_group_ids
+
+    from app.model.options import BUNDLED_GATED_OPTIONS_DIR
+    gated = load_option_catalog(dirs=[BUNDLED_GATED_OPTIONS_DIR])
+    gated_regions = gated.by_region()
+    assert "Genitalia" in gated_regions
+    assert {g.id for g in gated_regions["Chest"]} == {"chest_size",
+                                                      "chest_shape"}
 
 
 def test_groups_sorted_by_order():
@@ -101,14 +119,25 @@ def test_unknown_widget_is_a_load_error(tmp_path):
 
 def test_widget_derivation_matches_the_spec_table():
     catalog = load_option_catalog(strict=True)
-    # kind slider -> slider; colors -> swatch; single<=5 -> segmented;
-    # <=12 -> chips; otherwise -> picker (race has 13 options)
-    assert derive_widget(catalog.get("height")) == "slider"
+    # colors -> swatch; single<=5 -> segmented; <=12 -> chips; otherwise ->
+    # picker (race has 112 options; outfit ~85). The slider branch never
+    # fires on bundled data since 5.6c — covered by the drop-in test below.
     assert derive_widget(catalog.get("skin_tone")) == "swatch"
     assert derive_widget(catalog.get("gender_presentation")) == "segmented"
-    assert derive_widget(catalog.get("chest_size")) == "segmented"
-    assert derive_widget(catalog.get("outfit")) == "chips"
+    assert derive_widget(catalog.get("waist")) == "segmented"
+    assert derive_widget(catalog.get("chest_size")) == "chips"
+    assert derive_widget(catalog.get("height_band")) == "chips"
+    assert derive_widget(catalog.get("outfit")) == "picker"
     assert derive_widget(catalog.get("race")) == "picker"
+
+
+def test_widget_derivation_slider_branch_still_fires_on_dropins(tmp_path):
+    write_options(tmp_path / "h.json", [
+        {"id": "height", "kind": "slider", "field": "height",
+         "min": 140, "max": 220}])
+    catalog = load_option_catalog([tmp_path], include_bundled=False,
+                                  strict=True)
+    assert derive_widget(catalog.get("height")) == "slider"
 
 
 def test_explicit_widget_overrides_derivation(tmp_path):
@@ -320,19 +349,30 @@ def test_missing_directory_skipped(tmp_path):
     assert len(catalog) == 0
 
 
-def test_validate_selection():
-    catalog = load_option_catalog()
+def test_validate_selection(tmp_path):
+    write_options(tmp_path / "h.json", [
+        {"id": "height", "kind": "slider", "field": "height",
+         "min": 140, "max": 220}])
+    catalog = load_option_catalog([tmp_path])
     assert catalog.validate_selection("race", "human")
     assert not catalog.validate_selection("race", "nonexistent")
     assert catalog.validate_selection("traits", ["confident", "shy"])
     assert not catalog.validate_selection("traits", ["confident", "bogus"])
+    # numeric validation rides a drop-in slider (bundled sliders gone, 5.6c)
     assert catalog.validate_selection("height", 175)
     assert not catalog.validate_selection("height", "tall")
     assert not catalog.validate_selection("unknown_group", "x")
 
 
-def test_slider_clamp_and_prompt():
-    catalog = load_option_catalog()
+def test_slider_clamp_and_prompt(tmp_path):
+    # the slider machinery is dormant on bundled data (5.6c) but a drop-in
+    # numeric group still clamps and maps prompt_ranges
+    write_options(tmp_path / "h.json", [
+        {"id": "height", "kind": "slider", "field": "height",
+         "min": 140, "max": 220, "prompt_ranges": [
+             {"min": 168, "max": 182, "prompt": "average height"},
+             {"min": 183, "prompt": "tall"}]}])
+    catalog = load_option_catalog([tmp_path], include_bundled=False)
     height = catalog.get("height")
     assert height.clamp(300) == height.max
     assert height.clamp(100) == height.min
@@ -486,16 +526,25 @@ def test_merge_fragment_visible_when_on_required_group_rejected(tmp_path):
         load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
 
 
-def test_bundled_catalog_backward_compatible_untouched_by_5_6a():
-    # The existing seven data files predate class/tier/visible_when: they must
-    # load with zero errors and every group untiered + unconditional.
+def test_bundled_catalog_is_the_v2_tiered_conditional_shape():
+    # 5.6c inverted the 5.6a backward-compat check: the bundled files now
+    # carry the V2 vocabulary — tiers on every render group, visible_when on
+    # the species blocks, class metadata on the race options — and still load
+    # with zero errors.
     catalog = load_option_catalog()
     assert catalog.errors == []
-    for group in catalog.groups():
-        assert group.tier is None
-        assert group.visible_when is None
-        for opt in group.options:
-            assert opt.classes == ()
+    tiers = {g.id: g.tier for g in catalog.groups()}
+    assert tiers["race"] == "P0"
+    assert tiers["hair_length"] == "P1"
+    assert tiers["aesthetic"] == "P3"
+    assert tiers["age"] is None                 # numeric stays untiered
+    assert tiers["traits"] is None              # Subset C is 5.6d
+    assert catalog.get("fur_color").visible_when == {
+        "group": "race", "class": "beastfolk-mammal"}
+    assert catalog.get("race").visible_when is None   # required: unconditional
+    assert catalog.get("race").get_option("catfolk").classes == (
+        "beastfolk", "beastfolk-mammal")
+    assert catalog.get("race").get_option("human").classes == ()
 
 
 def test_gated_directory_is_structurally_absent_when_not_passed(tmp_path):

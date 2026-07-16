@@ -46,11 +46,17 @@ def assembler():
 # -- ordering unit tests (fake or no counter) ---------------------------------
 
 
-def test_untiered_catalog_keeps_flat_assembly_order():
-    # The pre-V2 bundled catalog is entirely untiered: assembly order must be
-    # exactly catalog.groups() — the byte-identity guarantee the existing
-    # exact-positive tests rely on.
-    catalog = load_option_catalog()
+def test_untiered_catalog_keeps_flat_assembly_order(tmp_path):
+    # An entirely untiered catalog assembles in exactly catalog.groups()
+    # order — the byte-identity degrade contract. (The bundled catalog is
+    # tiered since 5.6c, so this rides a synthetic untiered drop-in.)
+    write_options(tmp_path / "a.json", [
+        _single("g_first", None, "one", 1),
+        _single("g_mid", None, "two", 2),
+        _single("g_last", None, "three", 3),
+    ])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False,
+                                  strict=True)
     assert all(g.tier is None for g in catalog.groups())
     assert _assembly_groups(catalog) == catalog.groups()
 
@@ -245,5 +251,110 @@ def test_p0_p1_fit_the_first_window_on_a_maximal_record(tmp_path, settings,
 
     # and the tier sort actually did the work: some P2/P3/untiered fragment
     # sits past the boundary while every P0/P1 sits inside
+    assert any(piece_tier(p.source) not in ("P0", "P1")
+               for p in ap.pieces[boundary:])
+
+
+# -- the first-window contract over the REAL authored catalog (5.6c) ----------
+
+# Worst UI-constructible records per heavy species class-set: the assembler
+# ignores visible_when (visibility is a form concern), but the contract is
+# over records the conditional form can actually produce — one race's full
+# class set firing its P1 identity carriers, with token-heavy option choices
+# everywhere and every unconditional P1 group set.
+_HEAVY_BASE = {
+    "gender_presentation": "feminine",
+    "skin_tone": "gold_metallic",          # "metallic gold skin"
+    "hair_color": "strawberry_blonde",
+    "hair_style": "crown_braid",
+    "eye_color": "pupil_less_white",       # "blank white eyes"
+    "body_type": "voluptuous",
+    "apparent_age": "40s",                 # "middle-aged adult"
+    "hair_length": "floor_length",         # "absurdly long hair"
+    "ears": "pointed_long",
+    "horns": "forward_curve",              # "forward-curving horns"
+    "tail": "kitsune_nine",                # "nine fox tails"
+    "wings": "large_feathered",
+}
+
+_HEAVY_SPECIES = {
+    "lamia": {"lower_body": "serpent_coil", "scale_color": "obsidian"},
+    "harpy": {"lower_body": "bird_legs", "feather_color": "golden"},
+    "ghost": {"undead_state": "partially_skeletal",
+              "ethereal_opacity": "mostly_transparent"},
+    "android": {"chassis_finish": "brass_clockwork",
+                "faceplate": "synth_skin_seams"},
+}
+
+_HEAVY_P2_P3 = {
+    "hybrid_race": "starborn_celestial", "archetype": "courtesan",
+    "complexion": "battle_worn", "hair_color_2": "strawberry_blonde",
+    "hair_color_pattern": "split", "bangs": "hime_side_locks",
+    "facial_hair": "mutton_chops", "eye_color_2": "pupil_less_white",
+    "eye_shape": "downturned", "face_shape": "heart", "lips": "very_full",
+    "nose": "aquiline", "eyebrows": "arched", "makeup": "festival_paint",
+    "height_band": "towering", "muscle_def": "powerfully_built",
+    "tattoo_motif": "minimalist_line", "chest_size": "very_large",
+    "waist": "narrow", "hips": "very_wide", "rear": "heavy",
+    "body_hair": "moderate", "outfit_fit": "form_fitting",
+    "outfit_condition": "tattered", "neckline": "low_cut",
+    "chest_shape": "teardrop", "genitalia": "both",
+    "genitalia_size": "very_large", "grooming": "styled",
+}
+
+
+@pytest.mark.skipif(not _REAL_TOKENIZER,
+                    reason="the model's CLIP tokenizer is not on disk here")
+@pytest.mark.parametrize("race", sorted(_HEAVY_SPECIES))
+def test_real_catalog_p0_p1_fit_the_first_window(race, settings, assembler):
+    from app.model.options import BUNDLED_GATED_OPTIONS_DIR
+
+    settings.set("models.image.pipeline_config_dir", "models/sdxl_config")
+    count = clip_token_counter(settings)
+    assert count is not None
+
+    catalog = load_option_catalog(dirs=[BUNDLED_GATED_OPTIONS_DIR],
+                                  strict=True)
+    assert catalog.errors == []
+
+    selections = {"race": race, **_HEAVY_BASE, **_HEAVY_SPECIES[race],
+                  **_HEAVY_P2_P3}
+    tags = {gid: [o.id for o in catalog.get(gid).options]
+            for gid in ("eye_features", "other_features", "marks",
+                        "tattoo_placement", "piercings", "accessories",
+                        "aesthetic")}
+    tags["outfit"] = ["royal_regalia", "plate_armor", "lingerie"]
+    tags["outfit_palette"] = ["burgundy", "gold"]
+    record = CharacterRecord.create(
+        name="Maximal", age=140, selections=selections, tags=tags,
+        free_text={"appearance_notes":
+                   "a crescent scar over one brow, opal pendant"})
+    assert record.validate_against(catalog) == []
+
+    ap = assembler.assemble(record, catalog, lead=(("lora", "a1b2c3"),))
+    report = token_report(ap, count)
+
+    # the detail load must overflow the single window or this proves nothing
+    assert report["total"] > CLIP_CONTENT_BUDGET
+    assert report["boundary_index"] < len(ap.pieces)
+
+    tier_by_group = {g.id: g.tier for g in catalog.groups()}
+
+    def piece_tier(source):
+        if source in ("quality", "subject", "age", "lora"):
+            return "P0"
+        for prefix in ("selections.", "tags."):
+            if source.startswith(prefix):
+                gid = source[len(prefix):].split(".", 1)[0]
+                return tier_by_group.get(gid)
+        return None
+
+    boundary = report["boundary_index"]
+    for i, piece in enumerate(ap.pieces):
+        if piece_tier(piece.source) in ("P0", "P1"):
+            assert i < boundary, (
+                f"{race}: P0/P1 fragment {piece.source!r} ({piece.text!r}) "
+                f"landed outside the first window (index {i}, boundary "
+                f"{boundary})")
     assert any(piece_tier(p.source) not in ("P0", "P1")
                for p in ap.pieces[boundary:])

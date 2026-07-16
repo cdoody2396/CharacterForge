@@ -15,15 +15,18 @@ from app.model.age import AgeError
 
 
 def make_record(**overrides):
+    # Catalog-clean against the 5.6c bundled (ungated) vocabulary: no sliders
+    # (deleted, V2 flag 3), no gated options (lingerie lives behind the gate),
+    # hair_style ids are pure shapes now. Legacy-shaped records are exercised
+    # explicitly via overrides / tests/test_vocabulary_data.py.
     base = dict(
         name="Seraphina Vale",
         age=27,
         selections={"race": "elf", "gender_presentation": "feminine",
                     "skin_tone": "fair", "hair_color": "silver",
-                    "hair_style": "long", "eye_color": "violet",
+                    "hair_style": "wavy", "eye_color": "violet",
                     "body_type": "athletic", "chest_size": "medium"},
-        tags={"traits": ["confident", "witty"], "outfit": ["gown", "lingerie"]},
-        sliders={"height": 172, "weight": 60, "muscle": 35},
+        tags={"traits": ["confident", "witty"], "outfit": ["gown"]},
         free_text={
             "backstory": "A ranger from the northern reach who lost her clan to war.",
             "personality": "Guarded with strangers, fiercely loyal once trust is earned.",
@@ -37,7 +40,9 @@ def make_record(**overrides):
 
 
 def test_record_round_trips_to_dict_and_back():
-    original = make_record()
+    # sliders passed explicitly: the record schema still round-trips them
+    # even though no bundled slider group remains (lenient-load contract)
+    original = make_record(sliders={"height": 172})
     data = original.to_dict()
     restored = CharacterRecord.from_dict(data)
     assert restored.to_dict() == data

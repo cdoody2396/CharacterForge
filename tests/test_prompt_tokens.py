@@ -199,7 +199,7 @@ def test_preview_prompt_reports_tokens_unavailable_on_sandbox(images, creator):
         "mode": "quick", "name": "Tok One", "age": 24,
         "selections": {"race": "human", "gender_presentation": "feminine",
                        "skin_tone": "fair", "hair_color": "black",
-                       "hair_style": "short", "eye_color": "brown",
+                       "hair_style": "bob", "eye_color": "brown",
                        "body_type": "average"}})
     pv = images.preview_prompt(rec["id"])
     assert pv["ok"] is True

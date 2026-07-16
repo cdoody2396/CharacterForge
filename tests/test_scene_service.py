@@ -155,7 +155,7 @@ def _character_with_matte(creator):
         "mode": "quick", "name": "Ada", "age": 30,
         "selections": {"race": "human", "gender_presentation": "feminine",
                        "skin_tone": "fair", "hair_color": "black",
-                       "hair_style": "short", "eye_color": "brown",
+                       "hair_style": "bob", "eye_color": "brown",
                        "body_type": "average"}})
     cid = created["id"]
     store = creator.store

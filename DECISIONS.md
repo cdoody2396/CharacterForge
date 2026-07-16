@@ -160,7 +160,7 @@ Full adult content is permitted, including explicit anatomy and adult scenarios.
 - **Grouped by body region, progressive disclosure** (expand a region to reach detailed options) — keeps the exhaustive option set navigable.
 - **Explicit anatomy is permitted** (bounded by §11 safety layers; the 20+ gate and prohibited-category filters are unaffected).
 - **Consistency is a LoRA property, not a creator-field property.** The creator sets the categorical target; the LoRA promotion pass makes anatomy consistent across the catalog. The creator defines, the LoRA enforces.
-- **Continuous sliders are reserved for axes the model honors continuously** — height, weight, muscle mass (broad visual ranges). Discrete anatomy uses categorical controls.
+- **No continuous sliders** (amended Stage 5.6 — the height/weight/muscle reservation is withdrawn, V2 flag 3: metric bands are species-blind and the model consumes categorical tags). Body scale is species-relative categorical — height band, muscle definition, silhouette mass. All anatomy and body description uses categorical controls.
 
 **Known capability limit (user-approved):** the model renders *categorical* anatomy reliably and *fine dimensional* specification unreliably. Pseudo-precise anatomical sliders would imply control the pipeline cannot deliver, so they are not used. This is a property of how these models consume conditioning, not a tuning gap.
 
@@ -223,6 +223,6 @@ Stated plainly so they are not discovered late:
 | Memory | Static system prompt | No cross-window memory; a chatbot, not a living character. |
 | Memory | Plain RAG (as target) | Kept as fallback only; drops the distinctive forgetting behavior. |
 | Safety | Model refusal alone | The single most-bypassable layer; the exact single-layer approach that fails locally. |
-| Anatomy | Continuous precision sliders | Model cannot honor fine dimensional control; overpromises. |
+| Anatomy & body | Continuous sliders (any axis — the height/weight/muscle reservation withdrawn at Stage 5.6) | Model cannot honor fine dimensional control; overpromises. |
 | Scenes | Character-in-scene single-pass | Fights identity consistency vs. compositing. |
 | Options | Editor UI first | Format is the real mechanism; editor is a convenience layer on top. |

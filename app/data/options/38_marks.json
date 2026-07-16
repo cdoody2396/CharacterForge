@@ -1,0 +1,100 @@
+{
+  "groups": [
+    {
+      "id": "marks",
+      "label": "Distinctive Marks",
+      "kind": "multi",
+      "field": "marks",
+      "order": 72,
+      "section": "Marks",
+      "tier": "P2",
+      "_note": "V2 B43 (replaces distinctive_features; legacy values load leniently and lint). Old horns/wings/tail/scales entries moved to the dedicated species-feature groups.",
+      "options": [
+        { "id": "freckles", "label": "Freckles", "prompt": "freckles" },
+        { "id": "beauty_mark", "label": "Beauty Mark", "prompt": "beauty mark" },
+        { "id": "mole_under_eye", "label": "Mole Under Eye", "prompt": "mole under eye" },
+        { "id": "dimples", "label": "Dimples", "prompt": "dimples" },
+        { "id": "vitiligo", "label": "Vitiligo", "prompt": "vitiligo patches" },
+        { "id": "birthmark", "label": "Birthmark", "prompt": "birthmark" },
+        { "id": "facial_scar", "label": "Facial Scar", "prompt": "facial scar" },
+        { "id": "scar_across_eye", "label": "Scar Across Eye", "prompt": "scar across eye" },
+        { "id": "torso_scar", "label": "Torso Scar", "prompt": "torso scar" },
+        { "id": "arm_scars", "label": "Arm Scars", "prompt": "scarred arms" },
+        { "id": "burn_scar", "label": "Burn Scar", "prompt": "burn scar" },
+        { "id": "ritual_scarring", "label": "Ritual Scarring", "prompt": "ritual scarification" },
+        { "id": "stitches", "label": "Stitches", "prompt": "stitches" },
+        { "id": "glowing_runes", "label": "Glowing Runes", "prompt": "glowing runic markings" },
+        { "id": "subdermal_cyber_lines", "label": "Subdermal Cyber Lines", "prompt": "subdermal circuit lines" },
+        { "id": "serial_barcode", "label": "Serial Barcode", "prompt": "serial number barcode" },
+        { "id": "visible_fangs", "label": "Visible Fangs", "prompt": "fangs" },
+        { "id": "gold_tooth", "label": "Gold Tooth", "prompt": "gold tooth" }
+      ]
+    },
+    {
+      "id": "tattoo_placement",
+      "label": "Tattoos",
+      "kind": "multi",
+      "field": "tattoo_placement",
+      "order": 73,
+      "section": "Marks",
+      "tier": "P2",
+      "_note": "No 'none' option - an empty multi selection is none, which lets tattoo_motif key on any:true.",
+      "options": [
+        { "id": "left_sleeve", "label": "Left Sleeve", "prompt": "left arm tattoo" },
+        { "id": "right_sleeve", "label": "Right Sleeve", "prompt": "right arm tattoo" },
+        { "id": "both_sleeves", "label": "Both Sleeves", "prompt": "tattoo sleeves" },
+        { "id": "back_piece", "label": "Back Piece", "prompt": "large back tattoo" },
+        { "id": "chest", "label": "Chest", "prompt": "chest tattoo" },
+        { "id": "neck", "label": "Neck", "prompt": "neck tattoo" },
+        { "id": "face", "label": "Face", "prompt": "facial tattoo" },
+        { "id": "hands", "label": "Hands", "prompt": "hand tattoos" },
+        { "id": "thigh", "label": "Thigh", "prompt": "thigh tattoo" }
+      ]
+    },
+    {
+      "id": "tattoo_motif",
+      "label": "Tattoo Motif",
+      "kind": "single",
+      "field": "tattoo_motif",
+      "order": 74,
+      "section": "Marks",
+      "tier": "P2",
+      "visible_when": { "group": "tattoo_placement", "any": true },
+      "options": [
+        { "id": "tribal", "label": "Tribal", "prompt": "tribal tattoo design" },
+        { "id": "floral", "label": "Floral", "prompt": "floral tattoo design" },
+        { "id": "runic", "label": "Runic", "prompt": "runic tattoo design" },
+        { "id": "geometric", "label": "Geometric", "prompt": "geometric tattoo design" },
+        { "id": "irezumi", "label": "Irezumi", "prompt": "irezumi tattoo design" },
+        { "id": "circuitry", "label": "Circuitry", "prompt": "circuit tattoo design" },
+        { "id": "script", "label": "Script", "prompt": "script tattoo design" },
+        { "id": "minimalist_line", "label": "Minimalist Line", "prompt": "fine-line tattoo design" },
+        { "id": "gothic", "label": "Gothic", "prompt": "gothic tattoo design" },
+        { "id": "nautical", "label": "Nautical", "prompt": "nautical tattoo design" }
+      ]
+    },
+    {
+      "id": "piercings",
+      "label": "Piercings",
+      "kind": "multi",
+      "field": "piercings",
+      "order": 75,
+      "section": "Marks",
+      "tier": "P3",
+      "_note": "Gated placements append from app/data/options_gated (V2 flag 7).",
+      "options": [
+        { "id": "ear_studs", "label": "Ear Studs", "prompt": "ear piercing" },
+        { "id": "multiple_ear_rings", "label": "Multiple Ear Rings", "prompt": "multiple ear piercings" },
+        { "id": "industrial", "label": "Industrial", "prompt": "industrial piercing" },
+        { "id": "eyebrow", "label": "Eyebrow", "prompt": "eyebrow piercing" },
+        { "id": "nose_stud", "label": "Nose Stud", "prompt": "nose piercing" },
+        { "id": "septum", "label": "Septum", "prompt": "septum piercing" },
+        { "id": "lip", "label": "Lip", "prompt": "lip piercing" },
+        { "id": "labret", "label": "Labret", "prompt": "labret piercing" },
+        { "id": "tongue", "label": "Tongue", "prompt": "tongue piercing" },
+        { "id": "navel", "label": "Navel", "prompt": "navel piercing" },
+        { "id": "dermal", "label": "Dermal", "prompt": "dermal piercings" }
+      ]
+    }
+  ]
+}

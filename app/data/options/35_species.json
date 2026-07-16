@@ -1,0 +1,426 @@
+{
+  "groups": [
+    {
+      "id": "ears",
+      "label": "Ears",
+      "kind": "single",
+      "field": "ears",
+      "order": 50,
+      "section": "Species Features",
+      "tier": "P1",
+      "options": [
+        { "id": "human", "label": "Human", "prompt": "" },
+        { "id": "pointed_short", "label": "Pointed (Short)", "prompt": "short pointed ears" },
+        { "id": "pointed_long", "label": "Pointed (Long)", "prompt": "long pointed ears" },
+        { "id": "feline", "label": "Feline", "prompt": "cat ears" },
+        { "id": "canine", "label": "Canine", "prompt": "dog ears" },
+        { "id": "fox", "label": "Fox", "prompt": "fox ears" },
+        { "id": "rabbit_upright", "label": "Rabbit (Upright)", "prompt": "rabbit ears" },
+        { "id": "rabbit_lop", "label": "Rabbit (Lop)", "prompt": "lop rabbit ears" },
+        { "id": "deer", "label": "Deer", "prompt": "deer ears" },
+        { "id": "round_bear", "label": "Round Bear", "prompt": "bear ears" },
+        { "id": "mouse", "label": "Mouse", "prompt": "mouse ears" },
+        { "id": "bat", "label": "Bat", "prompt": "bat ears" },
+        { "id": "fin", "label": "Fin", "prompt": "fin ears" },
+        { "id": "mechanical", "label": "Mechanical", "prompt": "mechanical ears" }
+      ]
+    },
+    {
+      "id": "horns",
+      "label": "Horns",
+      "kind": "single",
+      "field": "horns",
+      "order": 51,
+      "section": "Species Features",
+      "tier": "P2",
+      "options": [
+        { "id": "none", "label": "None", "prompt": "" },
+        { "id": "small_nubs", "label": "Small Nubs", "prompt": "small horn nubs" },
+        { "id": "curved_back", "label": "Curved Back", "prompt": "curved horns" },
+        { "id": "forward_curve", "label": "Forward Curve", "prompt": "forward-curving horns" },
+        { "id": "ram_curl", "label": "Ram Curl", "prompt": "ram horns" },
+        { "id": "antlers", "label": "Antlers", "prompt": "antlers" },
+        { "id": "single_oni_horn", "label": "Single Oni Horn", "prompt": "single oni horn" },
+        { "id": "spiral_pair", "label": "Spiral Pair", "prompt": "spiral horns" },
+        { "id": "demon_crown", "label": "Demon Crown", "prompt": "demon horns" },
+        { "id": "broken_horn", "label": "Broken Horn", "prompt": "broken horn" },
+        { "id": "crystal", "label": "Crystal", "prompt": "crystal horns" }
+      ]
+    },
+    {
+      "id": "tail",
+      "label": "Tail",
+      "kind": "single",
+      "field": "tail",
+      "order": 52,
+      "section": "Species Features",
+      "tier": "P1",
+      "options": [
+        { "id": "none", "label": "None", "prompt": "" },
+        { "id": "feline", "label": "Feline", "prompt": "cat tail" },
+        { "id": "fox", "label": "Fox", "prompt": "fox tail" },
+        { "id": "kitsune_two", "label": "Kitsune (Two-Tail)", "prompt": "two fox tails" },
+        { "id": "kitsune_nine", "label": "Kitsune (Nine-Tail)", "prompt": "nine fox tails" },
+        { "id": "canine", "label": "Canine", "prompt": "dog tail" },
+        { "id": "fluffy_wolf", "label": "Fluffy Wolf", "prompt": "fluffy wolf tail" },
+        { "id": "rabbit_puff", "label": "Rabbit Puff", "prompt": "rabbit tail" },
+        { "id": "deer", "label": "Deer", "prompt": "deer tail" },
+        { "id": "cow", "label": "Cow", "prompt": "cow tail" },
+        { "id": "lizard", "label": "Lizard", "prompt": "lizard tail" },
+        { "id": "spiked_dragon", "label": "Spiked Dragon", "prompt": "spiked dragon tail" },
+        { "id": "spade_demon", "label": "Spade Demon", "prompt": "demon tail" },
+        { "id": "fish", "label": "Fish", "prompt": "fish tail" },
+        { "id": "mechanical", "label": "Mechanical", "prompt": "mechanical tail" },
+        { "id": "ghost_wisp", "label": "Ghost Wisp", "prompt": "wisp tail" }
+      ]
+    },
+    {
+      "id": "wings",
+      "label": "Wings",
+      "kind": "single",
+      "field": "wings",
+      "order": 53,
+      "section": "Species Features",
+      "tier": "P2",
+      "options": [
+        { "id": "none", "label": "None", "prompt": "" },
+        { "id": "small_feathered", "label": "Small Feathered", "prompt": "small feathered wings" },
+        { "id": "large_feathered", "label": "Large Feathered", "prompt": "large feathered wings" },
+        { "id": "black_feathered", "label": "Black Feathered", "prompt": "black feathered wings" },
+        { "id": "bat", "label": "Bat", "prompt": "bat wings" },
+        { "id": "dragon", "label": "Dragon", "prompt": "dragon wings" },
+        { "id": "butterfly", "label": "Butterfly", "prompt": "butterfly wings" },
+        { "id": "dragonfly", "label": "Dragonfly", "prompt": "dragonfly wings" },
+        { "id": "fairy", "label": "Fairy", "prompt": "fairy wings" },
+        { "id": "mechanical", "label": "Mechanical", "prompt": "mechanical wings" },
+        { "id": "light_energy", "label": "Light / Energy", "prompt": "wings of light" },
+        { "id": "tattered", "label": "Tattered", "prompt": "tattered wings" }
+      ]
+    },
+    {
+      "id": "fur_coverage",
+      "label": "Fur Coverage",
+      "kind": "single",
+      "field": "fur_coverage",
+      "order": 54,
+      "section": "Species Features",
+      "tier": "P2",
+      "visible_when": { "group": "race", "class": "beastfolk-mammal" },
+      "options": [
+        { "id": "accents", "label": "Accents Only (Ears / Tail / Paws)", "prompt": "fur accents" },
+        { "id": "partial", "label": "Partial", "prompt": "partial body fur" },
+        { "id": "full", "label": "Full", "prompt": "full body fur" }
+      ]
+    },
+    {
+      "id": "fur_color",
+      "label": "Fur Color",
+      "kind": "single",
+      "field": "fur_color",
+      "order": 55,
+      "section": "Species Features",
+      "tier": "P1",
+      "visible_when": { "group": "race", "class": "beastfolk-mammal" },
+      "options": [
+        { "id": "white", "label": "White", "prompt": "white fur", "color": "#f2f2f2" },
+        { "id": "cream", "label": "Cream", "prompt": "cream fur", "color": "#f0e3c8" },
+        { "id": "tawny", "label": "Tawny", "prompt": "tawny fur", "color": "#c9a05e" },
+        { "id": "ginger", "label": "Ginger", "prompt": "ginger fur", "color": "#c96f34" },
+        { "id": "russet", "label": "Russet", "prompt": "russet fur", "color": "#9e4f26" },
+        { "id": "brown", "label": "Brown", "prompt": "brown fur", "color": "#6e4a2e" },
+        { "id": "dark_brown", "label": "Dark Brown", "prompt": "dark brown fur", "color": "#4a2e1a" },
+        { "id": "black", "label": "Black", "prompt": "black fur", "color": "#1f1f23" },
+        { "id": "grey", "label": "Grey", "prompt": "grey fur", "color": "#8e97a3" },
+        { "id": "silver", "label": "Silver", "prompt": "silver fur", "color": "#c9ccd4" },
+        { "id": "golden", "label": "Golden", "prompt": "golden fur", "color": "#d9ab52" },
+        { "id": "blue_grey", "label": "Blue-Grey", "prompt": "blue grey fur", "color": "#7d8ba8" },
+        { "id": "pastel_pink", "label": "Pastel Pink", "prompt": "pastel pink fur", "color": "#eebcd0" },
+        { "id": "lavender", "label": "Lavender", "prompt": "lavender fur", "color": "#b9a3d8" }
+      ]
+    },
+    {
+      "id": "fur_pattern",
+      "label": "Fur Pattern",
+      "kind": "single",
+      "field": "fur_pattern",
+      "order": 56,
+      "section": "Species Features",
+      "tier": "P2",
+      "visible_when": { "group": "race", "class": "beastfolk-mammal" },
+      "options": [
+        { "id": "solid", "label": "Solid", "prompt": "" },
+        { "id": "striped", "label": "Striped", "prompt": "striped fur" },
+        { "id": "spotted", "label": "Spotted", "prompt": "spotted fur" },
+        { "id": "calico", "label": "Calico", "prompt": "calico fur" },
+        { "id": "brindle", "label": "Brindle", "prompt": "brindle fur" },
+        { "id": "masked", "label": "Masked", "prompt": "masked fur markings" },
+        { "id": "gradient", "label": "Gradient", "prompt": "gradient fur" },
+        { "id": "tipped", "label": "Tipped", "prompt": "dark-tipped fur" }
+      ]
+    },
+    {
+      "id": "scale_coverage",
+      "label": "Scale Coverage",
+      "kind": "single",
+      "field": "scale_coverage",
+      "order": 57,
+      "section": "Species Features",
+      "tier": "P2",
+      "visible_when": { "group": "race", "class": "scaled" },
+      "options": [
+        { "id": "accents", "label": "Accents", "prompt": "scale accents" },
+        { "id": "partial", "label": "Partial", "prompt": "partial scales" },
+        { "id": "full", "label": "Full", "prompt": "full body scales" }
+      ]
+    },
+    {
+      "id": "scale_color",
+      "label": "Scale Color",
+      "kind": "single",
+      "field": "scale_color",
+      "order": 58,
+      "section": "Species Features",
+      "tier": "P1",
+      "visible_when": { "group": "race", "class": "scaled" },
+      "options": [
+        { "id": "emerald", "label": "Emerald", "prompt": "emerald scales", "color": "#2f9e5f" },
+        { "id": "jade", "label": "Jade", "prompt": "jade scales", "color": "#6fae8f" },
+        { "id": "teal", "label": "Teal", "prompt": "teal scales", "color": "#4d9e97" },
+        { "id": "azure", "label": "Azure", "prompt": "azure scales", "color": "#4f8fd8" },
+        { "id": "cobalt", "label": "Cobalt", "prompt": "cobalt scales", "color": "#3d5a9e" },
+        { "id": "violet", "label": "Violet", "prompt": "violet scales", "color": "#8a5fc8" },
+        { "id": "crimson", "label": "Crimson", "prompt": "crimson scales", "color": "#8e2f39" },
+        { "id": "obsidian", "label": "Obsidian", "prompt": "obsidian scales", "color": "#23252a" },
+        { "id": "bone", "label": "Bone", "prompt": "bone white scales", "color": "#e8e2d2" },
+        { "id": "pearl", "label": "Pearl", "prompt": "pearlescent scales", "color": "#f4f1ec" },
+        { "id": "gold", "label": "Gold", "prompt": "golden scales", "color": "#cfa53c" },
+        { "id": "copper", "label": "Copper", "prompt": "copper scales", "color": "#b0662f" },
+        { "id": "silver", "label": "Silver", "prompt": "silver scales", "color": "#c8cdd4" },
+        { "id": "sand", "label": "Sand", "prompt": "sand-colored scales", "color": "#d8c49a" }
+      ]
+    },
+    {
+      "id": "scale_sheen",
+      "label": "Scale Sheen",
+      "kind": "single",
+      "field": "scale_sheen",
+      "order": 59,
+      "section": "Species Features",
+      "tier": "P2",
+      "visible_when": { "group": "race", "class": "scaled" },
+      "options": [
+        { "id": "matte", "label": "Matte", "prompt": "" },
+        { "id": "glossy", "label": "Glossy", "prompt": "glossy scales" },
+        { "id": "iridescent", "label": "Iridescent", "prompt": "iridescent scales" }
+      ]
+    },
+    {
+      "id": "feather_coverage",
+      "label": "Feather Coverage",
+      "kind": "single",
+      "field": "feather_coverage",
+      "order": 60,
+      "section": "Species Features",
+      "tier": "P2",
+      "visible_when": { "group": "race", "class": "feathered" },
+      "options": [
+        { "id": "accents", "label": "Accents", "prompt": "feather accents" },
+        { "id": "partial", "label": "Partial", "prompt": "partial plumage" },
+        { "id": "full", "label": "Full", "prompt": "full plumage" }
+      ]
+    },
+    {
+      "id": "feather_color",
+      "label": "Feather Color",
+      "kind": "single",
+      "field": "feather_color",
+      "order": 61,
+      "section": "Species Features",
+      "tier": "P1",
+      "visible_when": { "group": "race", "class": "feathered" },
+      "options": [
+        { "id": "white", "label": "White", "prompt": "white feathers", "color": "#f2f2f2" },
+        { "id": "black", "label": "Black", "prompt": "black feathers", "color": "#1f1f23" },
+        { "id": "brown", "label": "Brown", "prompt": "brown feathers", "color": "#6e4a2e" },
+        { "id": "tawny", "label": "Tawny", "prompt": "tawny feathers", "color": "#c9a05e" },
+        { "id": "golden", "label": "Golden", "prompt": "golden feathers", "color": "#d9ab52" },
+        { "id": "grey", "label": "Grey", "prompt": "grey feathers", "color": "#8e97a3" },
+        { "id": "silver", "label": "Silver", "prompt": "silver feathers", "color": "#c9ccd4" },
+        { "id": "red", "label": "Red", "prompt": "red feathers", "color": "#c0504d" },
+        { "id": "blue", "label": "Blue", "prompt": "blue feathers", "color": "#4f74d8" },
+        { "id": "teal", "label": "Teal", "prompt": "teal feathers", "color": "#4d9e97" },
+        { "id": "green", "label": "Green", "prompt": "green feathers", "color": "#4d9e6a" },
+        { "id": "violet", "label": "Violet", "prompt": "violet feathers", "color": "#8a5fc8" }
+      ]
+    },
+    {
+      "id": "chassis_finish",
+      "label": "Chassis Finish",
+      "kind": "single",
+      "field": "chassis_finish",
+      "order": 62,
+      "section": "Species Features",
+      "tier": "P1",
+      "visible_when": { "group": "race", "class": "construct" },
+      "options": [
+        { "id": "matte_white", "label": "Matte White", "prompt": "matte white chassis" },
+        { "id": "gloss_white", "label": "Gloss White", "prompt": "glossy white chassis" },
+        { "id": "matte_black", "label": "Matte Black", "prompt": "matte black chassis" },
+        { "id": "gunmetal", "label": "Gunmetal", "prompt": "gunmetal chassis" },
+        { "id": "brushed_steel", "label": "Brushed Steel", "prompt": "brushed steel chassis" },
+        { "id": "chrome", "label": "Chrome", "prompt": "chrome chassis" },
+        { "id": "ceramic", "label": "Ceramic", "prompt": "ceramic chassis" },
+        { "id": "carbon_weave", "label": "Carbon Weave", "prompt": "carbon fiber chassis" },
+        { "id": "brass_clockwork", "label": "Brass Clockwork", "prompt": "brass clockwork chassis" }
+      ]
+    },
+    {
+      "id": "chassis_seams",
+      "label": "Chassis Seams",
+      "kind": "single",
+      "field": "chassis_seams",
+      "order": 63,
+      "section": "Species Features",
+      "tier": "P2",
+      "visible_when": { "group": "race", "class": "construct" },
+      "options": [
+        { "id": "seamless", "label": "Seamless Synth-Skin", "prompt": "seamless synthetic skin" },
+        { "id": "visible_joints", "label": "Visible Joint Lines", "prompt": "visible joint lines" },
+        { "id": "segmented_plates", "label": "Segmented Plates", "prompt": "segmented armor plating" },
+        { "id": "exposed_actuators", "label": "Exposed Actuators", "prompt": "exposed actuators" }
+      ]
+    },
+    {
+      "id": "faceplate",
+      "label": "Face",
+      "kind": "single",
+      "field": "faceplate",
+      "order": 64,
+      "section": "Species Features",
+      "tier": "P2",
+      "visible_when": { "group": "race", "class": "construct" },
+      "options": [
+        { "id": "fully_human", "label": "Fully Human", "prompt": "" },
+        { "id": "synth_skin_seams", "label": "Synth-Skin with Seams", "prompt": "synthetic skin with facial seams" },
+        { "id": "visor", "label": "Visor", "prompt": "visor face" },
+        { "id": "screen_face", "label": "Screen Face", "prompt": "screen face" },
+        { "id": "sculpted_mask", "label": "Sculpted Mask", "prompt": "sculpted faceplate" }
+      ]
+    },
+    {
+      "id": "ethereal_opacity",
+      "label": "Form Opacity",
+      "kind": "single",
+      "field": "ethereal_opacity",
+      "order": 65,
+      "section": "Species Features",
+      "tier": "P1",
+      "visible_when": { "group": "race", "class": "ethereal" },
+      "options": [
+        { "id": "solid", "label": "Solid", "prompt": "" },
+        { "id": "faint_shimmer", "label": "Faint Shimmer", "prompt": "faint shimmer" },
+        { "id": "translucent", "label": "Translucent", "prompt": "translucent body" },
+        { "id": "mostly_transparent", "label": "Mostly Transparent", "prompt": "mostly transparent" }
+      ]
+    },
+    {
+      "id": "glow_color",
+      "label": "Glow Color",
+      "kind": "single",
+      "field": "glow_color",
+      "order": 66,
+      "section": "Species Features",
+      "tier": "P2",
+      "visible_when": { "group": "race", "class": "ethereal" },
+      "options": [
+        { "id": "white", "label": "White", "prompt": "soft white glow", "color": "#f4f1ec" },
+        { "id": "gold", "label": "Gold", "prompt": "golden glow", "color": "#cfa53c" },
+        { "id": "ice_blue", "label": "Ice Blue", "prompt": "ice blue glow", "color": "#a8d8e8" },
+        { "id": "cyan", "label": "Cyan", "prompt": "cyan glow", "color": "#4dc8d8" },
+        { "id": "green", "label": "Green", "prompt": "green glow", "color": "#4d9e6a" },
+        { "id": "violet", "label": "Violet", "prompt": "violet glow", "color": "#8a5fc8" },
+        { "id": "magenta", "label": "Magenta", "prompt": "magenta glow", "color": "#c84da8" },
+        { "id": "red", "label": "Red", "prompt": "red glow", "color": "#c0504d" },
+        { "id": "ember_orange", "label": "Ember Orange", "prompt": "ember orange glow", "color": "#d87634" },
+        { "id": "pink", "label": "Pink", "prompt": "pink glow", "color": "#e8a3bd" },
+        { "id": "void_purple", "label": "Void Purple", "prompt": "dark void purple glow", "color": "#4a2e6e" },
+        { "id": "silver", "label": "Silver", "prompt": "silver glow", "color": "#c8cdd4" }
+      ]
+    },
+    {
+      "id": "lower_body",
+      "label": "Lower Body",
+      "kind": "single",
+      "field": "lower_body",
+      "order": 67,
+      "section": "Species Features",
+      "tier": "P1",
+      "visible_when": { "group": "race", "class": "monstrous" },
+      "options": [
+        { "id": "serpent_coil", "label": "Serpent Coil", "prompt": "snake lower body" },
+        { "id": "fish_tail", "label": "Fish Tail", "prompt": "fish tail" },
+        { "id": "spider_abdomen", "label": "Spider Abdomen", "prompt": "spider lower body" },
+        { "id": "quadruped_horse", "label": "Quadruped (Horse)", "prompt": "horse lower body" },
+        { "id": "quadruped_deer", "label": "Quadruped (Deer)", "prompt": "deer lower body" },
+        { "id": "quadruped_big_cat", "label": "Quadruped (Big Cat)", "prompt": "feline lower body" },
+        { "id": "quadruped_goat", "label": "Quadruped (Goat)", "prompt": "goat lower body" },
+        { "id": "slime_mass", "label": "Slime Mass", "prompt": "slime lower body" },
+        { "id": "bird_legs", "label": "Bird Legs", "prompt": "bird legs" }
+      ]
+    },
+    {
+      "id": "elemental_marks",
+      "label": "Manifestation",
+      "kind": "multi",
+      "field": "elemental_marks",
+      "order": 68,
+      "section": "Species Features",
+      "tier": "P2",
+      "visible_when": { "group": "race", "class": "elemental-cosmic" },
+      "options": [
+        { "id": "hair_of_element", "label": "Hair of the Element", "prompt": "elemental hair" },
+        { "id": "glowing_veins", "label": "Glowing Veins", "prompt": "glowing veins" },
+        { "id": "aura", "label": "Aura", "prompt": "glowing aura" },
+        { "id": "crackling_limbs", "label": "Crackling Limbs", "prompt": "crackling energy" },
+        { "id": "molten_cracks", "label": "Molten Cracks", "prompt": "molten cracks" },
+        { "id": "frost_rime", "label": "Frost Rime", "prompt": "frost rime" },
+        { "id": "blooming_flowers", "label": "Blooming Flowers", "prompt": "blooming flowers" },
+        { "id": "starfield_skin", "label": "Starfield Skin", "prompt": "starfield skin" }
+      ]
+    },
+    {
+      "id": "undead_state",
+      "label": "State",
+      "kind": "single",
+      "field": "undead_state",
+      "order": 69,
+      "section": "Species Features",
+      "tier": "P1",
+      "visible_when": { "group": "race", "class": "undead" },
+      "options": [
+        { "id": "pristine", "label": "Pristine", "prompt": "" },
+        { "id": "pale", "label": "Pale", "prompt": "deathly pale" },
+        { "id": "gaunt", "label": "Gaunt", "prompt": "gaunt" },
+        { "id": "stitched", "label": "Stitched", "prompt": "stitched skin" },
+        { "id": "partially_skeletal", "label": "Partially Skeletal", "prompt": "partially skeletal" },
+        { "id": "spectral", "label": "Spectral", "prompt": "spectral form" }
+      ]
+    },
+    {
+      "id": "other_features",
+      "label": "Other Features",
+      "kind": "multi",
+      "field": "other_features",
+      "order": 70,
+      "section": "Species Features",
+      "tier": "P2",
+      "options": [
+        { "id": "halo", "label": "Halo", "prompt": "halo" },
+        { "id": "broken_halo", "label": "Broken Halo", "prompt": "broken halo" },
+        { "id": "third_eye", "label": "Third Eye", "prompt": "third eye" },
+        { "id": "gills", "label": "Gills", "prompt": "gills" },
+        { "id": "antennae", "label": "Antennae", "prompt": "antennae" }
+      ]
+    }
+  ]
+}

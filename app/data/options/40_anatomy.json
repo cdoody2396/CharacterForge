@@ -2,94 +2,72 @@
   "groups": [
     {
       "id": "chest_size",
-      "label": "Chest Size",
+      "label": "Chest",
       "kind": "single",
       "field": "chest_size",
       "region": "Chest",
       "attribute": "Size",
-      "order": 40,
+      "order": 100,
+      "tier": "P2",
       "options": [
         { "id": "flat", "label": "Flat", "prompt": "flat chest" },
         { "id": "small", "label": "Small", "prompt": "small breasts" },
+        { "id": "modest", "label": "Modest", "prompt": "modest bust" },
         { "id": "medium", "label": "Medium", "prompt": "medium breasts" },
         { "id": "large", "label": "Large", "prompt": "large breasts" },
-        { "id": "very_large", "label": "Very Large", "prompt": "very large breasts" }
+        { "id": "very_large", "label": "Very Large", "prompt": "very large breasts" },
+        { "id": "huge", "label": "Huge", "prompt": "huge breasts" }
       ]
     },
     {
-      "id": "chest_shape",
-      "label": "Chest Shape",
+      "id": "waist",
+      "label": "Waist",
       "kind": "single",
-      "field": "chest_shape",
-      "region": "Chest",
-      "attribute": "Shape",
-      "order": 41,
+      "field": "waist",
+      "region": "Hips & Rear",
+      "attribute": "Waist",
+      "order": 102,
+      "tier": "P2",
       "options": [
-        { "id": "natural", "label": "Natural", "prompt": "natural shape" },
-        { "id": "round", "label": "Round", "prompt": "round shape" },
-        { "id": "teardrop", "label": "Teardrop", "prompt": "teardrop shape" },
-        { "id": "athletic", "label": "Athletic", "prompt": "firm athletic chest" }
+        { "id": "narrow", "label": "Narrow", "prompt": "narrow waist" },
+        { "id": "average", "label": "Average", "prompt": "" },
+        { "id": "thick", "label": "Thick", "prompt": "thick waist" },
+        { "id": "soft", "label": "Soft", "prompt": "soft waist" }
       ]
     },
     {
-      "id": "hip_size",
-      "label": "Hip Width",
+      "id": "hips",
+      "label": "Hips",
       "kind": "single",
-      "field": "hip_size",
+      "field": "hips",
       "region": "Hips & Rear",
       "attribute": "Width",
-      "order": 50,
+      "order": 103,
+      "tier": "P2",
+      "_note": "V2 B50 (replaces hip_size; legacy values load leniently and lint).",
       "options": [
         { "id": "narrow", "label": "Narrow", "prompt": "narrow hips" },
-        { "id": "average", "label": "Average", "prompt": "average hips" },
+        { "id": "average", "label": "Average", "prompt": "" },
         { "id": "wide", "label": "Wide", "prompt": "wide hips" },
         { "id": "very_wide", "label": "Very Wide", "prompt": "very wide hips" }
       ]
     },
     {
-      "id": "rear_size",
-      "label": "Rear Size",
+      "id": "rear",
+      "label": "Rear",
       "kind": "single",
-      "field": "rear_size",
+      "field": "rear",
       "region": "Hips & Rear",
       "attribute": "Size",
-      "order": 51,
+      "order": 104,
+      "tier": "P3",
+      "_note": "V2 B51 (replaces rear_size; legacy values load leniently and lint).",
       "options": [
         { "id": "small", "label": "Small", "prompt": "small rear" },
-        { "id": "average", "label": "Average", "prompt": "average rear" },
+        { "id": "average", "label": "Average", "prompt": "" },
         { "id": "full", "label": "Full", "prompt": "full rear" },
-        { "id": "large", "label": "Large", "prompt": "large rear" }
-      ]
-    },
-    {
-      "id": "genital_config",
-      "label": "Genital Configuration",
-      "kind": "single",
-      "field": "genital_config",
-      "region": "Genitalia",
-      "attribute": "Configuration",
-      "order": 60,
-      "options": [
-        { "id": "unspecified", "label": "Unspecified", "prompt": "" },
-        { "id": "vulva", "label": "Vulva", "prompt": "female anatomy" },
-        { "id": "penis", "label": "Penis", "prompt": "male anatomy" },
-        { "id": "both", "label": "Both", "prompt": "intersex anatomy" },
-        { "id": "none", "label": "None / Featureless", "prompt": "featureless, doll-like anatomy" }
-      ]
-    },
-    {
-      "id": "genital_size",
-      "label": "Genital Size",
-      "kind": "single",
-      "field": "genital_size",
-      "region": "Genitalia",
-      "attribute": "Size",
-      "order": 61,
-      "options": [
-        { "id": "unspecified", "label": "Unspecified", "prompt": "" },
-        { "id": "small", "label": "Small", "prompt": "small" },
-        { "id": "average", "label": "Average", "prompt": "average" },
-        { "id": "large", "label": "Large", "prompt": "large" }
+        { "id": "large", "label": "Large", "prompt": "large rear" },
+        { "id": "heavy", "label": "Heavy", "prompt": "heavy rear" }
       ]
     },
     {
@@ -99,33 +77,13 @@
       "field": "body_hair",
       "region": "Features",
       "attribute": "Body Hair",
-      "order": 70,
+      "order": 105,
+      "tier": "P3",
       "options": [
         { "id": "smooth", "label": "Smooth", "prompt": "smooth, hairless" },
         { "id": "light", "label": "Light", "prompt": "light body hair" },
         { "id": "moderate", "label": "Moderate", "prompt": "moderate body hair" },
         { "id": "heavy", "label": "Heavy", "prompt": "heavy body hair" }
-      ]
-    },
-    {
-      "id": "distinctive_features",
-      "label": "Distinctive Features",
-      "kind": "tags",
-      "field": "distinctive_features",
-      "region": "Features",
-      "attribute": "Marks",
-      "order": 71,
-      "options": [
-        { "id": "freckles", "label": "Freckles", "prompt": "freckles" },
-        { "id": "tattoos", "label": "Tattoos", "prompt": "tattoos" },
-        { "id": "piercings", "label": "Piercings", "prompt": "piercings" },
-        { "id": "scars", "label": "Scars", "prompt": "battle scars" },
-        { "id": "birthmark", "label": "Birthmark", "prompt": "a distinctive birthmark" },
-        { "id": "horns", "label": "Horns", "prompt": "horns", "tags": ["fantasy"] },
-        { "id": "wings", "label": "Wings", "prompt": "wings", "tags": ["fantasy"] },
-        { "id": "tail", "label": "Tail", "prompt": "a tail", "tags": ["fantasy"] },
-        { "id": "scales", "label": "Scales", "prompt": "patches of scales", "tags": ["fantasy"] },
-        { "id": "glowing_markings", "label": "Glowing Markings", "prompt": "glowing markings", "tags": ["fantasy", "scifi"] }
       ]
     }
   ]

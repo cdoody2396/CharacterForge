@@ -30,7 +30,7 @@ def write_options(directory, name, payload) -> None:
 # required set — pass an explicit "" to clear one and exercise the gate).
 REQUIRED_SELECTIONS = {
     "race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
-    "hair_color": "black", "hair_style": "short", "eye_color": "brown",
+    "hair_color": "black", "hair_style": "bob", "eye_color": "brown",
     "body_type": "average",
 }
 
@@ -74,7 +74,7 @@ def test_bundled_colors_parse():
     porcelain = catalog.get("skin_tone").get_option("porcelain")
     assert porcelain.color and porcelain.color.startswith("#")
     # colorless options stay colorless
-    assert catalog.get("hair_style").get_option("short").color is None
+    assert catalog.get("hair_style").get_option("bob").color is None
 
 
 def test_merge_overrides_quick_and_section(tmp_path):
@@ -100,9 +100,15 @@ def test_anatomy_slider_is_unrepresentable_new_group(tmp_path):
 
 def test_anatomy_slider_is_unrepresentable_via_merge(tmp_path):
     # an extension fragment cannot move an existing slider onto a region —
-    # and the failed merge must leave the bundled group COMPLETELY untouched
-    # (a half-merged group was an execution-confirmed §12 bypass)
-    write_options(tmp_path, "bad_merge.json", {
+    # and the failed merge must leave the base group COMPLETELY untouched
+    # (a half-merged group was an execution-confirmed §12 bypass).
+    # 5.6c removed the bundled sliders, so the legal slider under attack is a
+    # drop-in (field `height` stays a reserved §12 axis in the format).
+    write_options(tmp_path, "a_height.json", {
+        "groups": [{"id": "height", "label": "Height", "kind": "slider",
+                    "field": "height", "min": 140, "max": 220}]
+    })
+    write_options(tmp_path, "b_merge.json", {
         "groups": [{"id": "height", "label": "HACKED", "region": "Legs",
                     "min": -9999, "max": 9999}]
     })
@@ -125,9 +131,12 @@ def test_numeric_reservation_is_a_closed_list(tmp_path):
 
 
 def test_bundled_numeric_set_is_exactly_the_reserved_axes():
+    # 5.6c (V2 flag 3): the height/weight/muscle sliders are deleted from the
+    # data — age is the only bundled numeric group. The numeric machinery
+    # stays dormant in the format, still guarding the reserved axes.
     catalog = load_option_catalog(strict=True)
     numeric = {g.field for g in catalog.groups() if g.is_numeric}
-    assert numeric == {"height", "weight", "muscle", "age"}
+    assert numeric == {"age"}
 
 
 def test_file_application_is_atomic(tmp_path):
@@ -254,8 +263,8 @@ def test_describe_shape(creator):
     assert by_id["race"]["section"] == "Identity"
     assert by_id["traits"]["multi"] is True
     assert by_id["chest_size"]["region"] == "Chest"
-    assert by_id["height"]["kind"] == "slider"
-    assert by_id["height"]["min"] == 140 and by_id["height"]["max"] == 220
+    assert by_id["age"]["kind"] == "number"
+    assert by_id["age"]["min"] == 20 and by_id["age"]["max"] == 10000
     # groups arrive sorted for a stable layout
     orders = [g["order"] for g in described["groups"]]
     assert orders == sorted(orders)
@@ -272,9 +281,23 @@ def test_describe_shape(creator):
         "race", "gender_presentation", "skin_tone", "hair_color",
         "hair_style", "eye_color", "body_type"}
     assert by_id["race"]["required"] is True
-    assert by_id["race"]["widget"] == "picker"      # 13 colorless options
+    assert by_id["race"]["widget"] == "picker"      # 112 colorless options
     assert by_id["skin_tone"]["widget"] == "swatch"  # carries colors
-    assert by_id["height"]["prompt_ranges"]          # band labels for the slider
+
+
+def test_dropin_slider_ships_prompt_ranges_on_describe(tmp_path, audit):
+    # 5.5c band labels still ride the payload for a (drop-in) slider — the
+    # bundled sliders are gone (5.6c) but the machinery stays live.
+    data_dir = tmp_path / "data"
+    write_options(data_dir / "options", "70_height.json", {
+        "groups": [{"id": "height", "label": "Height", "kind": "slider",
+                    "field": "height", "min": 140, "max": 220,
+                    "prompt_ranges": [{"max": 152, "prompt": "very short"}]}]})
+    creator = build_creator(data_dir, audit)
+    height = next(g for g in creator.describe()["groups"]
+                  if g["id"] == "height")
+    assert height["widget"] == "slider"
+    assert height["prompt_ranges"]                   # band labels for the slider
 
 
 def test_no_select_widget_ever_derived(creator):
@@ -403,24 +426,25 @@ def test_quick_create_with_selections(creator):
 
 
 def test_detailed_create_full_round_trips(creator):
+    # 5.6c vocabulary: V2 ids (hips/apparent_age/height_band/marks), archetype
+    # is single now, sliders are gone from the payload (groups deleted).
     res = creator.create_character({
         "mode": "detailed",
         "name": "Kaela Vane",
         "age": 132,
         "selections": {
             "race": "tiefling", "gender_presentation": "feminine",
-            "skin_tone": "olive", "hair_color": "red", "hair_style": "long",
+            "skin_tone": "olive", "hair_color": "red", "hair_style": "wavy",
             "eye_color": "gold", "body_type": "curvy", "chest_size": "large",
-            "hip_size": "wide", "genital_config": "vulva",
+            "hips": "wide", "apparent_age": "30s", "height_band": "tall",
+            "archetype": "mage", "horns": "curved_back", "tail": "spade_demon",
             "disposition": "fiery", "voice": "sultry",
         },
         "tags": {
-            "archetype": ["mage", "noble"],
             "traits": ["confident", "witty", "ambitious"],
-            "outfit": ["gown", "lingerie"],
-            "distinctive_features": ["horns", "tail"],
+            "outfit": ["gown"],
+            "marks": ["freckles", "beauty_mark"],
         },
-        "sliders": {"height": 175, "weight": 70, "muscle": 35},
         "free_text": {
             "backstory": "Exiled court mage of an infernal duchy.",
             "personality_notes": "Sharp tongue, softer center.",
@@ -430,8 +454,8 @@ def test_detailed_create_full_round_trips(creator):
     assert res["ok"] is True
     assert res["issues"] == []
     record = creator.store.load(res["id"])
-    assert record.tags["archetype"] == ["mage", "noble"]
-    assert record.sliders == {"height": 175, "weight": 70, "muscle": 35}
+    assert record.selections["archetype"] == "mage"
+    assert record.tags["marks"] == ["freckles", "beauty_mark"]
     assert record.free_text["backstory"].startswith("Exiled")
     assert record.selections["chest_size"] == "large"
     assert record.validate_against(creator.catalog) == []
@@ -508,7 +532,8 @@ def test_unknown_selection_group(creator):
 
 
 def test_unknown_selection_option(creator):
-    res = creator.create_character(quick_payload(selections={"race": "gnome"}))
+    # (gnome is a real race since 5.6c — use a genuinely unknown id)
+    res = creator.create_character(quick_payload(selections={"race": "martian"}))
     assert res["ok"] is False and res["field"] == "selections.race"
 
 
@@ -549,7 +574,23 @@ def test_empty_selection_and_tags_dropped(creator):
     assert record.selections == REQUIRED_SELECTIONS and record.tags == {}
 
 
-def test_slider_clamps_to_group_bounds(creator):
+def _slider_creator(tmp_path, audit):
+    """A creator whose catalog carries drop-in height/weight sliders — the
+    bundled sliders were deleted at 5.6c, but the numeric machinery stays
+    dormant in the format and these tests keep it honest."""
+    data_dir = tmp_path / "data"
+    write_options(data_dir / "options", "70_sliders.json", {
+        "groups": [
+            {"id": "height", "label": "Height", "kind": "slider",
+             "field": "height", "min": 140, "max": 220},
+            {"id": "weight", "label": "Weight", "kind": "slider",
+             "field": "weight", "min": 40, "max": 200},
+        ]})
+    return build_creator(data_dir, audit)
+
+
+def test_slider_clamps_to_group_bounds(tmp_path, audit):
+    creator = _slider_creator(tmp_path, audit)
     res = creator.create_character(quick_payload(
         sliders={"height": 9999, "weight": 1}))
     assert res["ok"] is True
@@ -558,15 +599,17 @@ def test_slider_clamps_to_group_bounds(creator):
     assert record.sliders["weight"] == 40  # min
 
 
-def test_slider_rejects_non_numeric_and_bool(creator):
+def test_slider_rejects_non_numeric_and_bool(tmp_path, audit):
+    creator = _slider_creator(tmp_path, audit)
     for bad in ("tall", None, True):
         res = creator.create_character(quick_payload(sliders={"height": bad}))
         assert res["ok"] is False and res["field"] == "sliders.height"
 
 
-def test_slider_rejects_huge_int_and_non_finite(creator):
+def test_slider_rejects_huge_int_and_non_finite(tmp_path, audit):
     # a JSON integer beyond float range must be a structured error, not an
     # uncaught OverflowError escaping to the bridge
+    creator = _slider_creator(tmp_path, audit)
     res = creator.create_character(quick_payload(sliders={"height": 10 ** 400}))
     assert res["ok"] is False and res["field"] == "sliders.height"
     for bad in (float("nan"), float("inf"), "inf"):
@@ -577,6 +620,13 @@ def test_slider_rejects_huge_int_and_non_finite(creator):
 def test_slider_on_categorical_group_rejected(creator):
     res = creator.create_character(quick_payload(sliders={"race": 3}))
     assert res["ok"] is False and res["field"] == "sliders.race"
+
+
+def test_slider_on_deleted_group_rejected(creator):
+    # the bundled height group is gone (5.6c) — a payload naming it is a
+    # clean structured invalid, exactly like any unknown slider group
+    res = creator.create_character(quick_payload(sliders={"height": 170}))
+    assert res["ok"] is False and res["field"] == "sliders.height"
 
 
 def test_age_group_not_reachable_as_slider_or_selection(creator):
@@ -812,10 +862,23 @@ def test_update_non_visual_edit_does_not_mark_stale(creator):
     assert creator.store.load_cache(cid).stale is False
 
 
-def test_update_age_change_is_render_relevant(creator):
+def test_update_age_change_alone_is_render_irrelevant(creator):
+    # 5.6c (V2 A3): age renders via apparent_age only — the numeric age's
+    # prompt_ranges were removed from the data, so a years-only edit no
+    # longer changes the assembled prompt. The structural adult anchor stays.
     cid = _created(creator, age=25)
     _forge_manifests(creator.store, cid)
     res = creator.update_character(cid, edit_payload(age=60))
+    assert res["ok"] is True and res["render_changed"] is False
+    assert creator.store.load_catalog(cid).stale is False
+
+
+def test_update_apparent_age_change_is_render_relevant(creator):
+    # ...and the band that DOES render is apparent_age (V2 A4, img:P1)
+    cid = _created(creator, age=25)
+    _forge_manifests(creator.store, cid)
+    res = creator.update_character(cid, edit_payload(
+        selections={"apparent_age": "elderly"}))
     assert res["ok"] is True and res["render_changed"] is True
     assert creator.store.load_catalog(cid).stale is True
 
@@ -943,11 +1006,13 @@ def test_update_preserves_unknown_group_values(tmp_path, audit):
         sliders={"height": 170, "reach": 88.0})
     creator.store.save(record)
 
-    # edit only the name; the unknown groups (faction/orders/reach) survive.
+    # edit only the name; the unknown groups (faction/orders/height/reach)
+    # survive — height is itself an unknown group since 5.6c deleted the
+    # bundled sliders, so it rides the same carry-forward as reach.
     # The edit must supply the required set (the gate re-runs, 5.5c).
     res = creator.update_character(record.id, edit_payload(
         name="Keeper Renamed", age=30, selections={"race": "elf"},
-        tags={"traits": ["curious"]}, sliders={"height": 170}))
+        tags={"traits": ["curious"]}))
     assert res["ok"] is True
     stored = creator.store.load(record.id)
     assert stored.name == "Keeper Renamed"
@@ -1069,9 +1134,10 @@ def test_describe_ships_class_tier_and_visible_when(tmp_path, audit):
     race_opts = {o["id"]: o for o in by_id["race"]["options"]}
     assert race_opts["catfolk"]["class"] == ["beastfolk", "beastfolk-mammal"]
     assert "class" not in race_opts["human"]  # untouched options stay lean
-    # untouched groups carry the additive keys as nulls
-    assert by_id["archetype"]["tier"] is None
-    assert by_id["archetype"]["visible_when"] is None
+    # groups without the additive keys carry them as nulls (the age group is
+    # the remaining untiered, unconditioned bundled group after 5.6c)
+    assert by_id["age"]["tier"] is None
+    assert by_id["age"]["visible_when"] is None
     # the whole payload stays strict-JSON bridge-safe
     json.dumps(described, allow_nan=False)
 

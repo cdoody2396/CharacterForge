@@ -11,13 +11,7 @@
       "step": 1,
       "default": 25,
       "unit": "years",
-      "prompt_ranges": [
-        { "max": 24, "prompt": "young adult" },
-        { "min": 25, "max": 39, "prompt": "adult" },
-        { "min": 40, "max": 59, "prompt": "mature adult" },
-        { "min": 60, "max": 120, "prompt": "elderly" },
-        { "min": 121, "prompt": "ageless, ancient being" }
-      ]
+      "_note": "prompt_ranges removed at 5.6c (V2 A3: age is img:none and renders via apparent_age only; the structural 'adult' anchor stays in prompt.py). The numeric machinery stays dormant in the format, still guarding age."
     }
   ]
 }

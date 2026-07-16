@@ -47,8 +47,7 @@ def make_record(**kwargs) -> CharacterRecord:
             "body_type": "athletic",
             "chest_size": "medium",
         },
-        tags={"outfit": ["fantasy_armor"], "distinctive_features": ["freckles"]},
-        sliders={"height": 150},
+        tags={"outfit": ["plate_armor"], "marks": ["freckles"]},
         free_text={"appearance_notes": "A crescent scar over the left eyebrow."},
     )
     base.update(kwargs)
@@ -158,24 +157,27 @@ def audit_events(audit):
 
 
 def test_assembles_in_documented_order(assembler, bundled_catalog):
+    # 5.6c catalog: tier buckets drive the option order (P0 race → P1
+    # render-identity → P2 detail), (order, id) stable within a bucket; the
+    # numeric age no longer contributes a fragment (V2 A3 — apparent_age owns
+    # the rendered band), so the race fragment follows the adult anchor.
     ap = assembler.assemble(make_record(), bundled_catalog)
-    # 1 quality → 2 subject → 3 adult anchor + range → 4 options in catalog order
+    # 1 quality → 2 subject → 3 adult anchor → 4 P0 race
     assert ap.positive.startswith(
         "masterpiece, best quality, very aesthetic, absurdres, "
-        "solo, 1girl, adult, young adult"
+        "solo, 1girl, adult, elf, pointed ears"
     )
     pos = ap.positive
-    # catalog (order, id): race 10 < skin 20 < hair 21 < body 30 < height 31
-    # < chest 40 < features 71 < outfit 90; notes last
+    # P1 by order: skin 20 < hair_color 22 < body_type 40;
+    # P2 by order: marks 72 < outfit 90 < chest_size 100; notes last
     for earlier, later in [
         ("elf, pointed ears", "fair skin"),
         ("fair skin", "silver hair"),
         ("silver hair", "athletic build"),
-        ("athletic build", "very short, petite stature"),  # height 150 range
-        ("very short, petite stature", "medium breasts"),
-        ("medium breasts", "freckles"),
-        ("freckles", "ornate fantasy armor"),
-        ("ornate fantasy armor", "crescent scar"),
+        ("athletic build", "freckles"),
+        ("freckles", "plate armor"),
+        ("plate armor", "medium breasts"),
+        ("medium breasts", "crescent scar"),
     ]:
         assert pos.index(earlier) < pos.index(later), (earlier, later)
     assert pos.rstrip().endswith("A crescent scar over the left eyebrow.")
@@ -210,8 +212,13 @@ def test_adult_anchor_survives_a_catalog_without_age_ranges(assembler):
     assert ", adult" in ap.positive  # structural, not data
 
 
-def test_age_range_fragment_dedupes_against_anchor(assembler, bundled_catalog):
-    ap = assembler.assemble(make_record(age=30), bundled_catalog)  # range: "adult"
+def test_apparent_age_fragment_dedupes_against_anchor(assembler,
+                                                      bundled_catalog):
+    # 5.6c: the numeric age contributes no fragment; the band that renders is
+    # apparent_age, and its "adult" band exact-dedupes against the anchor
+    record = make_record(age=30)
+    record.selections["apparent_age"] = "mid_late_20s"  # fragment: "adult"
+    ap = assembler.assemble(record, bundled_catalog)
     assert ap.positive.count(", adult") == 1
 
 
@@ -718,7 +725,7 @@ def test_build_services_wires_library_over_the_shared_store(tmp_path,
         {"mode": "quick", "name": "Wired", "age": 22,
          "selections": {"race": "human", "gender_presentation": "feminine",
                         "skin_tone": "fair", "hair_color": "black",
-                        "hair_style": "short", "eye_color": "brown",
+                        "hair_style": "bob", "eye_color": "brown",
                         "body_type": "average"}})
     assert created["ok"] is True
     listed = library.list_characters()
@@ -2575,7 +2582,7 @@ def _small_matrix(settings, expressions=1, poses=2):
 
 def test_generate_catalog_happy_path(creator, settings, audit, fake_engine,
                                      cull_models):
-    _small_matrix(settings)  # 1 expr x 2 poses x 1 outfit (fantasy_armor) = 2
+    _small_matrix(settings)  # 1 expr x 2 poses x 1 outfit (plate_armor) = 2
     factory = FakeToolkitFactory(outcomes=[{}] * 4)  # all kept
     service = bootstrap_service(creator, settings, audit, fake_engine, factory)
     record = _catalog_ready(creator)
@@ -2990,7 +2997,7 @@ def cache_service(creator, settings, audit, fake_engine, cull_factory,
     )
 
 
-STATE = {"expression": "smile", "pose": "sitting", "outfit": "fantasy_armor"}
+STATE = {"expression": "smile", "pose": "sitting", "outfit": "plate_armor"}
 
 
 def _engine_requests(fake_engine) -> int:
@@ -3464,7 +3471,7 @@ def test_on_demand_blocked_cell_prompt(creator, settings, audit, fake_engine,
                         lambda: fake_states)
     res = service.generate_on_demand(
         record.id, {"expression": "evil", "pose": "sitting",
-                    "outfit": "fantasy_armor"})
+                    "outfit": "plate_armor"})
     assert res["ok"] is False and res["kind"] == "blocked"
     assert _engine_requests(fake_engine) == 0
     assert any(e["kind"] == "filter_block" and e["layer"] == 1

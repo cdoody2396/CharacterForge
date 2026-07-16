@@ -2,79 +2,63 @@
   "groups": [
     {
       "id": "body_type",
-      "label": "Body Type",
+      "label": "Silhouette",
       "kind": "single",
       "field": "body_type",
-      "order": 30,
+      "order": 40,
       "section": "Body",
       "quick": true,
       "required": true,
+      "tier": "P1",
+      "_note": "V2 B1: silhouette now carries overall mass - the deleted weight slider's job. Height/weight/muscle sliders removed at 5.6c (V2 flag 3); replaced by height_band + muscle_def below.",
       "options": [
         { "id": "petite", "label": "Petite", "prompt": "petite build" },
         { "id": "slim", "label": "Slim", "prompt": "slim build" },
-        { "id": "athletic", "label": "Athletic", "prompt": "athletic build" },
+        { "id": "willowy", "label": "Willowy", "prompt": "willowy build" },
+        { "id": "lithe", "label": "Lithe", "prompt": "lithe build" },
         { "id": "average", "label": "Average", "prompt": "average build" },
+        { "id": "athletic", "label": "Athletic", "prompt": "athletic build" },
         { "id": "curvy", "label": "Curvy", "prompt": "curvy build" },
-        { "id": "voluptuous", "label": "Voluptuous", "prompt": "voluptuous build" },
+        { "id": "voluptuous", "label": "Voluptuous", "prompt": "voluptuous" },
+        { "id": "stocky", "label": "Stocky", "prompt": "stocky build" },
         { "id": "muscular", "label": "Muscular", "prompt": "muscular build" },
-        { "id": "heavyset", "label": "Heavyset", "prompt": "heavyset build" }
+        { "id": "heavyset", "label": "Heavyset", "prompt": "heavyset build" },
+        { "id": "hulking", "label": "Hulking", "prompt": "hulking build" }
       ]
     },
     {
-      "id": "height",
+      "id": "height_band",
       "label": "Height",
-      "kind": "slider",
-      "field": "height",
-      "order": 31,
+      "kind": "single",
+      "field": "height_band",
+      "order": 41,
       "section": "Body",
-      "min": 140,
-      "max": 220,
-      "step": 1,
-      "default": 170,
-      "unit": "cm",
-      "prompt_ranges": [
-        { "max": 152, "prompt": "very short, petite stature" },
-        { "min": 153, "max": 167, "prompt": "short stature" },
-        { "min": 168, "max": 182, "prompt": "average height" },
-        { "min": 183, "max": 197, "prompt": "tall" },
-        { "min": 198, "prompt": "very tall, towering" }
+      "tier": "P2",
+      "_note": "V2 B2: species-relative - measured against their kind's norm; the species tag anchors absolute scale. Extremes weak-honor on non-standard frames (kept-or-cut at 5.6e).",
+      "options": [
+        { "id": "very_short", "label": "Very Short", "prompt": "very short" },
+        { "id": "short", "label": "Short", "prompt": "short stature" },
+        { "id": "touch_short", "label": "A Touch Short", "prompt": "slightly short" },
+        { "id": "average", "label": "Average", "prompt": "" },
+        { "id": "touch_tall", "label": "A Touch Tall", "prompt": "slightly tall" },
+        { "id": "tall", "label": "Tall", "prompt": "tall" },
+        { "id": "towering", "label": "Towering", "prompt": "very tall, towering" }
       ]
     },
     {
-      "id": "weight",
-      "label": "Build Weight",
-      "kind": "slider",
-      "field": "weight",
-      "order": 32,
+      "id": "muscle_def",
+      "label": "Muscle",
+      "kind": "single",
+      "field": "muscle_def",
+      "order": 42,
       "section": "Body",
-      "min": 40,
-      "max": 200,
-      "step": 1,
-      "default": 68,
-      "unit": "kg",
-      "prompt_ranges": [
-        { "max": 52, "prompt": "very slender frame" },
-        { "min": 53, "max": 75, "prompt": "lean frame" },
-        { "min": 76, "max": 100, "prompt": "full frame" },
-        { "min": 101, "prompt": "heavy frame" }
-      ]
-    },
-    {
-      "id": "muscle",
-      "label": "Muscle Mass",
-      "kind": "slider",
-      "field": "muscle",
-      "order": 33,
-      "section": "Body",
-      "min": 0,
-      "max": 100,
-      "step": 1,
-      "default": 40,
-      "prompt_ranges": [
-        { "max": 20, "prompt": "soft, minimal muscle definition" },
-        { "min": 21, "max": 50, "prompt": "toned" },
-        { "min": 51, "max": 80, "prompt": "well-muscled, defined" },
-        { "min": 81, "prompt": "heavily muscled, bodybuilder physique" }
+      "tier": "P2",
+      "options": [
+        { "id": "soft", "label": "Soft", "prompt": "soft body" },
+        { "id": "toned", "label": "Toned", "prompt": "toned" },
+        { "id": "defined", "label": "Defined", "prompt": "well-defined muscles" },
+        { "id": "powerfully_built", "label": "Powerfully Built", "prompt": "powerfully built" },
+        { "id": "massive", "label": "Massive", "prompt": "extremely muscular" }
       ]
     }
   ]
