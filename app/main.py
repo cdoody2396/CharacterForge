@@ -46,7 +46,9 @@ def build_services() -> tuple[
     # the cull's cached-model resolutions were making live etag requests).
     _engine.pin_hf_offline(settings)
     content_filter = Layer1Filter()
-    creator = build_creator(DATA_DIR, audit)
+    # settings wires the 5.6a content gate: gated option dirs load only while
+    # content.gate_open is true, re-evaluated on every options reload.
+    creator = build_creator(DATA_DIR, audit, settings)
     # Stage-5 builders (persona/scene/event/scenario) live in a parallel store.
     builders = build_builders(DATA_DIR, audit)
     # The image service reads the creator's live catalog so "Reload options"

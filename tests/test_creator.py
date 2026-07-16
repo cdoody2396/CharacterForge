@@ -975,3 +975,133 @@ def test_update_unknown_group_not_re_added_if_payload_resets_it(tmp_path,
     # required set the edit supplied
     assert creator.store.load(record.id).selections == {
         **REQUIRED_SELECTIONS, "faction": "a"}
+
+
+# -- 5.6a: content gate + payload keys (class / tier / visible_when) ---------
+
+
+GATED_FILE = {"groups": [
+    {"id": "wardrobe_intimate", "kind": "single", "section": "Wardrobe",
+     "tier": "P2", "options": [{"id": "lingerie", "prompt": "lingerie"}]},
+    # a gated fragment appending an option to a bundled group (`outfit` is
+    # the current wardrobe group id; V2's rename lands with the 5.6c data)
+    {"id": "outfit", "options": [{"id": "test_gated_outfit",
+                                  "prompt": "elegant nightgown"}]},
+]}
+
+
+def _gated_creator(tmp_path, audit, gate_holder):
+    """A creator over the bundled catalog + a gated drop-in dir whose gate
+    reads a mutable holder (so tests flip it and reload)."""
+    data_dir = tmp_path / "data"
+    gated_dir = tmp_path / "gated"
+    write_options(gated_dir, "90_intimate.json", GATED_FILE)
+    return CreatorService(
+        store=CharacterStore(data_dir),
+        audit=audit,
+        option_dirs=(data_dir / "options",),
+        gated_option_dirs=(gated_dir,),
+        gate=lambda: gate_holder["open"],
+    )
+
+
+def test_gate_closed_catalog_structurally_lacks_gated_entries(tmp_path, audit):
+    creator = _gated_creator(tmp_path, audit, {"open": False})
+    assert "wardrobe_intimate" not in creator.catalog
+    assert not creator.catalog.get("outfit").has_option("test_gated_outfit")
+    described = creator.describe()
+    assert all(g["id"] != "wardrobe_intimate" for g in described["groups"])
+
+
+def test_gate_open_loads_gated_entries_and_reload_reevaluates(tmp_path, audit):
+    holder = {"open": True}
+    creator = _gated_creator(tmp_path, audit, holder)
+    assert "wardrobe_intimate" in creator.catalog
+    assert creator.catalog.get("outfit").has_option("test_gated_outfit")
+    assert creator.catalog.get("wardrobe_intimate").tier == "P2"
+
+    holder["open"] = False
+    creator.reload()  # the gate is re-read on every (re)load
+    assert "wardrobe_intimate" not in creator.catalog
+    assert not creator.catalog.get("outfit").has_option("test_gated_outfit")
+
+
+def test_gate_raising_reads_closed_never_crashes(tmp_path, audit):
+    def bad_gate():
+        raise RuntimeError("settings exploded")
+
+    data_dir = tmp_path / "data"
+    gated_dir = tmp_path / "gated"
+    write_options(gated_dir, "90_intimate.json", GATED_FILE)
+    creator = CreatorService(
+        store=CharacterStore(data_dir), audit=audit,
+        option_dirs=(data_dir / "options",),
+        gated_option_dirs=(gated_dir,), gate=bad_gate)
+    assert "wardrobe_intimate" not in creator.catalog  # fail-closed
+
+
+def test_gate_closed_payload_naming_gated_option_is_structured_invalid(
+        tmp_path, audit):
+    creator = _gated_creator(tmp_path, audit, {"open": False})
+    res = creator.create_character(quick_payload(
+        selections={"outfit": "test_gated_outfit"}))
+    assert res["ok"] is False
+    assert res["kind"] == "invalid"  # unknown option — a clean reject, no raise
+
+
+def test_describe_ships_class_tier_and_visible_when(tmp_path, audit):
+    data_dir = tmp_path / "data"
+    write_options(data_dir / "options", "70_v2.json", {"groups": [
+        {"id": "race", "options": [
+            {"id": "catfolk", "label": "Catfolk", "prompt": "catfolk",
+             "class": ["beastfolk", "beastfolk-mammal"]}]},
+        {"id": "fur_color", "kind": "single", "section": "Appearance",
+         "tier": "P1",
+         "visible_when": {"group": "race", "class": "beastfolk-mammal"},
+         "options": [{"id": "tawny", "label": "Tawny", "prompt": "tawny fur"}]},
+    ]})
+    creator = build_creator(data_dir, audit)
+    described = creator.describe()
+    by_id = {g["id"]: g for g in described["groups"]}
+    fur = by_id["fur_color"]
+    assert fur["tier"] == "P1"
+    assert fur["visible_when"] == {"group": "race", "class": "beastfolk-mammal"}
+    race_opts = {o["id"]: o for o in by_id["race"]["options"]}
+    assert race_opts["catfolk"]["class"] == ["beastfolk", "beastfolk-mammal"]
+    assert "class" not in race_opts["human"]  # untouched options stay lean
+    # untouched groups carry the additive keys as nulls
+    assert by_id["archetype"]["tier"] is None
+    assert by_id["archetype"]["visible_when"] is None
+    # the whole payload stays strict-JSON bridge-safe
+    json.dumps(described, allow_nan=False)
+
+
+def test_build_creator_with_settings_wires_the_gate(tmp_path, audit, settings):
+    # content.gate_open defaults open (user decision); an explicit false
+    # closes it; junk reads closed (fail-closed coercion).
+    from app.ui.creator import content_gate_open
+
+    assert content_gate_open(settings) is True  # shipped default
+    settings.set("content.gate_open", False)
+    assert content_gate_open(settings) is False
+    settings.set("content.gate_open", "yes")  # hand-edited junk
+    assert content_gate_open(settings) is False
+    settings.set("content.gate_open", True)
+    assert content_gate_open(settings) is True
+
+    # end-to-end through build_creator: a runtime data/options_gated drop-in
+    # appears only while the gate is open, and a settings flip lands on reload
+    data_dir = tmp_path / "data"
+    write_options(data_dir / "options_gated", "90_intimate.json", GATED_FILE)
+    creator = build_creator(data_dir, audit, settings)
+    assert "wardrobe_intimate" in creator.catalog
+    settings.set("content.gate_open", False)
+    creator.reload()
+    assert "wardrobe_intimate" not in creator.catalog
+
+
+def test_build_creator_without_settings_never_loads_gated(tmp_path, audit):
+    data_dir = tmp_path / "data"
+    write_options(data_dir / "options_gated", "90_intimate.json", GATED_FILE)
+    creator = build_creator(data_dir, audit)  # no settings -> no gate to read
+    assert "wardrobe_intimate" not in creator.catalog

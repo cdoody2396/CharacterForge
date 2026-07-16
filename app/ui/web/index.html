@@ -163,6 +163,15 @@
         <p id="settings-feedback" class="feedback"></p>
       </section>
 
+      <section class="card">
+        <h2>Content</h2>
+        <p class="hint">Structural content gate (5.6a, §11 Layer 3): while open, the gated option files (adult wardrobe / anatomy entries) load into the creator's catalog; closed, the catalog simply lacks them — nothing filters. Toggling reloads the options immediately.</p>
+        <div class="setting-row">
+          <label for="content-gate">Content gate open (adult options)</label>
+          <input type="checkbox" id="content-gate" data-key="content.gate_open">
+        </div>
+      </section>
+
       <section class="card" id="engine-card">
         <h2>Image engine</h2>
         <p class="hint">Diagnostic — the image model's load state and the §3 single-model VRAM slot. Heavy image ops run as background jobs; this frees the slot manually if one is left resident.</p>

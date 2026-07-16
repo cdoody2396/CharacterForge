@@ -66,3 +66,16 @@ def test_as_dict_is_a_copy(tmp_path):
 def test_defaults_shape_contains_swap_scaffold():
     assert set(DEFAULTS["models"].keys()) == {"active", "image", "chat"}
     assert DEFAULTS["models"]["active"] is None
+
+
+def test_content_gate_ships_open_and_deep_merges(tmp_path):
+    # 5.6a: the content gate defaults OPEN (user decision 2026-07-16) and
+    # arrives via deep-merge on a pre-5.6 settings.json with no migration.
+    assert DEFAULTS["content"]["gate_open"] is True
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"safety": {"logging_enabled": False}}),
+                    encoding="utf-8")
+    s = Settings(path)
+    assert s.get("content.gate_open") is True
+    s.set("content.gate_open", False)
+    assert Settings(path).get("content.gate_open") is False

@@ -75,6 +75,25 @@ def test_logging_toggle_syncs_audit(api, audit):
     assert audit.enabled is True
 
 
+def test_content_gate_settable_from_ui_and_type_guarded(api, settings):
+    # 5.6a: the Settings checkbox writes content.gate_open through the bridge
+    # (it must be whitelisted), booleans only — True==1 in Python, so a
+    # numeric 1 is rejected by the type guard, not coerced.
+    res = api.set_setting("content.gate_open", False)
+    assert res == {"ok": True, "error": None}
+    assert settings.get("content.gate_open") is False
+    on_disk = json.loads(settings.path.read_text(encoding="utf-8"))
+    assert on_disk["content"]["gate_open"] is False
+
+    res = api.set_setting("content.gate_open", True)
+    assert res == {"ok": True, "error": None}
+    assert settings.get("content.gate_open") is True
+
+    res = api.set_setting("content.gate_open", 1)
+    assert res["ok"] is False
+    assert settings.get("content.gate_open") is True  # unchanged
+
+
 def test_check_text_allowed(api):
     res = api.check_text("A quiet evening among adults.", "freetext")
     assert res["allowed"] is True

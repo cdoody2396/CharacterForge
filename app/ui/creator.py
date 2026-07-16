@@ -24,7 +24,7 @@ import base64
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..audit import AuditLog
 from ..model import (
@@ -42,7 +42,7 @@ from ..model import (
     load_option_catalog,
     resolve_within,
 )
-from ..model.options import BUNDLED_OPTIONS_DIR
+from ..model.options import BUNDLED_GATED_OPTIONS_DIR, BUNDLED_OPTIONS_DIR
 
 MODES = ("quick", "detailed")
 NAME_MAX_LEN = 120
@@ -99,8 +99,9 @@ class _Invalid(ValueError):
 def _option_payload(opt, image_resolver) -> dict:
     """One option as the UI consumes it: id + label, plus a swatch ``color``
     and/or a picker-tile ``image`` (a containment-resolved data URI) when the
-    option file carried them (5.5c). Generation-side data (prompt/aliases)
-    stays backend-side."""
+    option file carried them (5.5c), plus the ``class`` metadata (5.6a) that
+    front-end ``visible_when`` conditions read. Generation-side data
+    (prompt/aliases) stays backend-side."""
     out: dict[str, Any] = {"id": opt.id, "label": opt.label}
     if opt.color:
         out["color"] = opt.color
@@ -108,6 +109,8 @@ def _option_payload(opt, image_resolver) -> dict:
         src = image_resolver(opt.image)
         if src:
             out["image"] = src
+    if opt.classes:
+        out["class"] = list(opt.classes)
     return out
 
 
@@ -116,7 +119,10 @@ def _group_payload(group: OptionGroup, image_resolver) -> dict:
     fragments, aliases) stays backend-side on purpose. ``widget`` is the
     resolved creator widget (derivation applied, 5.5c) — the front-end renders
     it verbatim; ``required`` and ``prompt_ranges`` ride along for the required
-    marker and the live slider band label."""
+    marker and the live slider band label. ``visible_when`` (5.6a) is the
+    load-normalized condition the front-end evaluates against live selections
+    (null = always visible); ``tier`` rides along for transparency (the
+    assembler consumes it backend-side)."""
     return {
         "id": group.id,
         "label": group.label,
@@ -129,6 +135,8 @@ def _group_payload(group: OptionGroup, image_resolver) -> dict:
         "quick": group.quick,
         "required": group.required,
         "widget": derive_widget(group),
+        "tier": group.tier,
+        "visible_when": group.visible_when,
         "multi": group.multi,
         "options": [_option_payload(o, image_resolver) for o in group.options],
         "min": group.min,
@@ -150,20 +158,41 @@ class CreatorService:
         *,
         option_dirs: tuple[Path, ...] | list[Path] = (),
         include_bundled: bool = True,
+        gated_option_dirs: tuple[Path, ...] | list[Path] = (),
+        gate: Callable[[], bool] | None = None,
     ):
         self._store = store
         self._audit = audit
         self._option_dirs = tuple(Path(d) for d in option_dirs)
         self._include_bundled = include_bundled
+        # 5.6a content gate (§11 Layer-3): the gated dirs join the load ONLY
+        # while gate() is true — re-evaluated on every (re)load, so a settings
+        # flip takes effect on the next "Reload options" without a restart.
+        # No gate callable = never load gated dirs (fail-closed).
+        self._gated_option_dirs = tuple(Path(d) for d in gated_option_dirs)
+        self._gate = gate or (lambda: False)
         self._catalog = self._load_catalog()
         # Lazy Stage-4 render-change detector (see _render_changed). Kept
         # None until the first edit so importing the creator stays light.
         self._prompt_assembler = None
 
+    def _gate_open(self) -> bool:
+        """The content gate's current state; a raising gate reads closed
+        (fail-closed — a settings fault must never open gated content)."""
+        try:
+            return self._gate() is True
+        except Exception:  # noqa: BLE001 — fail closed, never crash a load
+            return False
+
     def _load_catalog(self) -> OptionCatalog:
-        return load_option_catalog(
-            self._option_dirs, include_bundled=self._include_bundled
-        )
+        dirs: tuple[Path, ...] = self._option_dirs
+        if self._gate_open():
+            # gated dirs load LAST: they append adult entries to the final
+            # ungated state (bundled -> user drop-ins -> bundled gated ->
+            # user gated); with the gate closed the catalog structurally
+            # lacks them — never a filter (§11 Layer 3).
+            dirs = dirs + self._gated_option_dirs
+        return load_option_catalog(dirs, include_bundled=self._include_bundled)
 
     @property
     def catalog(self) -> OptionCatalog:
@@ -198,8 +227,14 @@ class CreatorService:
         Bounded in size (a thumbnail, not a full render) and restricted to
         image types the CSP's ``img-src 'self' data:`` will display; anything
         larger, missing, unreadable, or non-image reads as no thumbnail rather
-        than raising — a bad path must never break the whole catalog."""
-        for base in (*self._option_dirs, BUNDLED_OPTIONS_DIR):
+        than raising — a bad path must never break the whole catalog. Gated
+        option dirs join the bases only while the gate is open (their options
+        are only in the catalog then anyway) — containment is per-dir, so a
+        gated thumbnail can never read outside the gated tree either."""
+        bases: tuple[Path, ...] = (*self._option_dirs, BUNDLED_OPTIONS_DIR)
+        if self._gate_open():
+            bases = bases + self._gated_option_dirs
+        for base in bases:
             resolved = resolve_within(base, rel)
             if resolved is None:
                 continue
@@ -608,13 +643,36 @@ class CreatorService:
         return out
 
 
-def build_creator(data_dir: Path | str, audit: AuditLog) -> CreatorService:
+def content_gate_open(settings) -> bool:
+    """The 5.6a content-gate setting, coerced fail-closed: only an explicit
+    boolean ``true`` opens the gate. A missing key reads the shipped default
+    (open — user decision 2026-07-16); a hand-edited junk value ("yes", 1,
+    null) closes it rather than crashing or guessing."""
+    try:
+        return settings.get("content.gate_open", True) is True
+    except Exception:  # noqa: BLE001 — a settings fault reads closed
+        return False
+
+
+def build_creator(
+    data_dir: Path | str, audit: AuditLog, settings=None
+) -> CreatorService:
     """Assemble the creator against a runtime data directory: bundled option
     files plus user drop-ins in ``<data_dir>/options``; records land under
-    ``<data_dir>/characters`` (via CharacterStore)."""
+    ``<data_dir>/characters`` (via CharacterStore). With ``settings`` given,
+    the gated option dirs (bundled ``options_gated`` + the runtime
+    ``<data_dir>/options_gated``) load while the content gate is open (5.6a);
+    without settings there is no gate to read, so gated dirs never load."""
     data_dir = Path(data_dir)
+    gated: tuple[Path, ...] = ()
+    gate: Callable[[], bool] | None = None
+    if settings is not None:
+        gated = (BUNDLED_GATED_OPTIONS_DIR, data_dir / "options_gated")
+        gate = lambda: content_gate_open(settings)  # noqa: E731 — re-read live
     return CreatorService(
         store=CharacterStore(data_dir),
         audit=audit,
         option_dirs=(data_dir / "options",),
+        gated_option_dirs=gated,
+        gate=gate,
     )

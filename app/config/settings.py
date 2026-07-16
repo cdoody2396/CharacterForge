@@ -203,6 +203,16 @@ DEFAULTS: dict[str, Any] = {
         # Layer 4 (§11): local audit logging of generations/conversations.
         "logging_enabled": True,
     },
+    "content": {
+        # Stage-5.6a content gate (§11 Layer-3 pattern): while open, the
+        # gated option directories (app/data/options_gated + the runtime
+        # data/options_gated) load into the catalog; closed, the catalog
+        # STRUCTURALLY lacks the adult entries — creator and prompt assembler
+        # alike (both consume the same catalog). User decision 2026-07-16:
+        # ships open. Coerced fail-closed: only an explicit boolean true
+        # opens the gate, so a hand-edited junk value closes it.
+        "gate_open": True,
+    },
     "jobs": {
         # Stage-5.5a long-running-job contract. One heavy job runs at a time
         # (the single GPU slot, §3); the queue bounds how many may wait behind

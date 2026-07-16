@@ -7,6 +7,12 @@
    slider) per group and the front-end renders it verbatim, so a large drop-in
    option list becomes a searchable picker automatically.
 
+   5.6a: groups may carry a `visible_when` condition (evaluated HERE against
+   live selections — the backend has no record context at describe() time); a
+   selection change in a condition-referenced group re-renders the form so
+   conditional groups appear/disappear. Hidden groups keep their state (for
+   re-reveal) but buildPayload() sends visible groups only.
+
    All free text is checked live against Layer 1 (check_text); the live check
    surfaces only BLOCKS (not a per-keystroke "passes" line) and the record is
    re-gated in the backend on save — the live check is UX, not the boundary.
@@ -65,11 +71,71 @@ window.Creator = (function () {
     return catalog.groups.find((g) => g.field === "age") || null;
   }
 
+  // ---- 5.6a data-driven conditionality (visible_when) -------------------
+  // The backend ships each group's load-normalized condition (or null); it is
+  // evaluated HERE against live selections — describe() has no record context.
+  // Anything unrecognized reads as visible (the doc's degrade semantics; the
+  // backend already normalized, this is defense in depth).
+
+  let condMemo = null; // rebuilt when the catalog object changes
+  function condIndex() {
+    if (!condMemo || condMemo.catalog !== catalog) {
+      const refs = new Set();   // group ids some condition references
+      const groups = new Map(); // id -> group payload
+      for (const g of (catalog && catalog.groups) || []) {
+        groups.set(g.id, g);
+        const c = g.visible_when;
+        if (c && typeof c === "object" && typeof c.group === "string")
+          refs.add(c.group);
+      }
+      condMemo = { catalog, refs, groups };
+    }
+    return condMemo;
+  }
+
+  function chosenIn(group) {
+    return group.multi
+      ? (state.tags[group.id] || [])
+      : (state.selections[group.id] ? [state.selections[group.id]] : []);
+  }
+
+  function visibleNow(g) {
+    const cond = g.visible_when;
+    if (!cond || typeof cond !== "object") return true;
+    const ref = condIndex().groups.get(cond.group);
+    if (!ref) return true; // missing referenced group -> degrade to visible
+    // Conditions read SELECTIONS; a numeric target (slider/number, incl. the
+    // age group) is an unsupported reference and degrades to visible — the
+    // degrade principle: bad data may only ever make a group MORE visible.
+    if (ref.kind === "slider" || ref.kind === "number") return true;
+    const chosen = chosenIn(ref);
+    if (cond.any === true) return chosen.length > 0;
+    if (Array.isArray(cond.in))
+      return chosen.some((id) => cond.in.includes(id));
+    if (typeof cond.class === "string")
+      return chosen.some((id) => {
+        const o = (ref.options || []).find((opt) => opt.id === id);
+        return !!(o && Array.isArray(o["class"]) &&
+                  o["class"].includes(cond.class));
+      });
+    return true;
+  }
+
+  // Re-render (re-evaluating visible_when) only when the changed group is
+  // referenced by some condition — zero re-renders on a condition-free
+  // catalog, so pre-5.6 interaction behavior is untouched. Hidden groups'
+  // state is kept (re-revealing restores it); buildPayload() already sends
+  // visible groups only, so hidden values never round-trip.
+  function selectionChanged(groupId) {
+    if (condIndex().refs.has(groupId)) render();
+  }
+
   // Groups the current mode renders as controls; the age group feeds the
-  // header input instead.
+  // header input instead. visible_when filters after the mode filter.
   function formGroups() {
     const groups = catalog.groups.filter((g) => g.field !== "age");
-    return mode === "quick" ? groups.filter((g) => g.quick) : groups;
+    const modal = mode === "quick" ? groups.filter((g) => g.quick) : groups;
+    return modal.filter(visibleNow);
   }
 
   // ------------------------------------------------------- field controls
@@ -130,6 +196,7 @@ window.Creator = (function () {
         for (const sib of row.children)
           sib.classList.toggle("on", sib === btn && !wasOn);
         clearFieldError(wrap);
+        selectionChanged(group.id);
       });
       row.appendChild(btn);
     }
@@ -153,6 +220,7 @@ window.Creator = (function () {
           list.push(o.id);
           btn.classList.add("on");
         }
+        selectionChanged(group.id);
       });
       row.appendChild(btn);
     }
@@ -164,6 +232,18 @@ window.Creator = (function () {
   // filtered subset is rendered (capped) so a large catalog stays responsive.
   const PICKER_RENDER_CAP = 120;
 
+  // Picker search text survives the visible_when re-render (5.6a): picking a
+  // race from a filtered picker may re-render the form (conditional groups
+  // appear), and losing the search mid-flow would be hostile. Cleared on
+  // reset / record-fill / end-of-edit so a stale search never prefills the
+  // next session's pickers.
+  const pickerSearchText = {}; // group id -> last search string
+
+  function clearPickerSearch() {
+    for (const gid of Object.keys(pickerSearchText))
+      delete pickerSearchText[gid];
+  }
+
   function pickerControl(group, wrap) {
     const multi = group.multi;
     const chosen = () => multi
@@ -174,6 +254,7 @@ window.Creator = (function () {
     const search = el("input", "picker-search");
     search.type = "search";
     search.placeholder = `Search ${group.label.toLowerCase()}… (${group.options.length})`;
+    search.value = pickerSearchText[group.id] || "";
     const grid = el("div", "picker-grid");
     const more = el("div", "picker-more");
 
@@ -191,6 +272,7 @@ window.Creator = (function () {
       }
       clearFieldError(wrap);
       paint();
+      selectionChanged(group.id);
     }
 
     function paint() {
@@ -220,7 +302,10 @@ window.Creator = (function () {
         : (matches.length ? "" : "No matches.");
     }
 
-    search.addEventListener("input", paint);
+    search.addEventListener("input", () => {
+      pickerSearchText[group.id] = search.value;
+      paint();
+    });
     box.appendChild(search);
     box.appendChild(grid);
     box.appendChild(more);
@@ -282,6 +367,10 @@ window.Creator = (function () {
       if (input.value !== "" && !Number.isNaN(v)) {
         state.sliders[group.id] = v;
         show();
+        // no selectionChanged: numeric-targeted conditions degrade to
+        // always-visible (visibleNow), so a slider can never flip visibility
+        // — and a mid-drag re-render would tear the control out from under
+        // the pointer.
       }
     });
     row.appendChild(input);
@@ -633,6 +722,7 @@ window.Creator = (function () {
       state.tags[k] = (v || []).slice();
     state.sliders = Object.assign({}, res.sliders || {});
     state.free_text = Object.assign({}, res.free_text || {});
+    clearPickerSearch(); // a fresh record starts with unfiltered pickers
   }
 
   function showRecordIssues(issues) {
@@ -691,6 +781,7 @@ window.Creator = (function () {
     state.tags = {};
     state.sliders = {};
     state.free_text = {};
+    clearPickerSearch();
     $("creator-alerts").textContent = "";
     $("create-feedback").className = "feedback";
     $("create-feedback").textContent = "";
@@ -1008,6 +1099,7 @@ window.Creator = (function () {
     state.tags = {};
     state.sliders = {};
     state.free_text = {};
+    clearPickerSearch();
     $("create-feedback").className = "feedback";
     $("create-feedback").textContent = "";
     if (catalog) render();
@@ -1039,6 +1131,9 @@ window.Creator = (function () {
     }
   }
 
+  // Returns true on success, false on failure — the error is handled (and
+  // shown) here, so callers (the Settings gate toggle, 5.6a) check the
+  // return value rather than a rejection that never comes.
   async function reloadOptions() {
     const feedback = $("create-feedback");
     try {
@@ -1049,9 +1144,11 @@ window.Creator = (function () {
       feedback.className = "feedback ok";
       feedback.textContent =
         `Options reloaded — ${formCount} option groups available.`;
+      return true;
     } catch (err) {
       feedback.className = "feedback error";
       feedback.textContent = "Reload failed: " + err;
+      return false;
     }
   }
 
@@ -1129,5 +1226,8 @@ window.Creator = (function () {
     ensureStarted();
   }
 
-  return { ensureStarted, beginEdit, beginCreate };
+  // reloadOptions is exposed for the Settings content-gate toggle (5.6a): a
+  // gate flip re-reads the option directories backend-side, and the form
+  // must adopt the fresh catalog (gated groups appear/disappear) immediately.
+  return { ensureStarted, beginEdit, beginCreate, reloadOptions };
 })();

@@ -13,8 +13,10 @@ and truncates around 75; see docs/IMAGE_PIPELINE.md):
   1. quality preamble        (data/positive_quality.txt)
   2. subject anchor          (solo + 1girl/1boy/1other from gender_presentation)
   3. adult anchor + age-range fragment (always asserts adulthood)
-  4. option fragments        (catalog group order — identity, appearance,
-                              body, anatomy, wardrobe; groups with
+  4. option fragments        (5.6b tier order: P0 → P1 → P2 → P3 → untiered
+                              buckets, stable (order, id) within each — the
+                              V2 first-window contract; an untiered catalog
+                              keeps the old flat creator order. Groups with
                               ``render: false`` are chat-side only)
   5. appearance_notes        (the one image-relevant free-text field)
 
@@ -72,6 +74,26 @@ _SOLO = "solo"  # always present: pins a single subject even when the
 
 # The structural adult anchor (P1). Always present in every positive prompt.
 _ADULT_ANCHOR = "adult"
+
+# 5.6b: the prompt-window ordering contract (CHARACTER_VOCABULARY_V2 §1).
+# Character assembly walks groups P0 -> P1 -> P2 -> P3 -> untiered, stable by
+# (order, id) inside a bucket, so P0+P1 render identity always lands inside
+# the first 77-token CLIP window (pooled embeds come from window 0 — see
+# engine.encode_chunked). Untiered groups rank last with today's (order, id)
+# semantics: an all-untiered catalog (the pre-V2 data files) assembles
+# byte-identically to the old flat catalog.groups() pass. `tier` is decoupled
+# from `order`, which keeps driving creator form layout.
+_TIER_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+_UNTIERED_RANK = len(_TIER_RANK)
+
+
+def _assembly_groups(catalog: OptionCatalog) -> list[OptionGroup]:
+    """Catalog groups in prompt-assembly order (tier buckets, then the stable
+    (order, id) layout order within each bucket)."""
+    return sorted(
+        catalog.groups(),
+        key=lambda g: (_TIER_RANK.get(g.tier, _UNTIERED_RANK), g.order, g.id),
+    )
 
 # Leading/trailing non-word characters, stripped from a fragment before the
 # adjacency gate so an author cannot pad a fragment edge with punctuation to
@@ -243,7 +265,8 @@ class PromptAssembler:
         for source, text in lead:
             add(source, text)
 
-        for group in catalog.groups():  # (order, id) — stable creator order
+        # 5.6b: tier buckets first (P0..P3, then untiered), (order, id) within
+        for group in _assembly_groups(catalog):
             if not group.render or group.field == "age" or group.id in exclude_groups:
                 continue
             for source, fragment in self._group_fragments(record, group):

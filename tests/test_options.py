@@ -338,3 +338,189 @@ def test_slider_clamp_and_prompt():
     assert height.clamp(100) == height.min
     assert "average" in height.prompt_for(175)
     assert "tall" in height.prompt_for(200)
+
+
+# -- 5.6a fifth format extension: class / tier / visible_when / gated dirs ----
+
+
+def test_option_class_parses_string_and_list(tmp_path):
+    write_options(tmp_path / "a.json", [{
+        "id": "race", "kind": "single", "options": [
+            {"id": "catfolk", "class": ["beastfolk", "beastfolk-mammal"]},
+            {"id": "human", "class": "near-human"},   # bare string -> 1-tuple
+            {"id": "slime"},                          # absent -> ()
+        ]}])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    race = catalog.get("race")
+    assert race.get_option("catfolk").classes == ("beastfolk", "beastfolk-mammal")
+    assert race.get_option("human").classes == ("near-human",)
+    assert race.get_option("slime").classes == ()
+    # round-trips under the JSON key "class" (classes is the Python-side name)
+    assert race.get_option("catfolk").to_dict()["class"] == [
+        "beastfolk", "beastfolk-mammal"]
+    assert "class" not in race.get_option("slime").to_dict()
+
+
+def test_option_class_junk_is_a_format_error(tmp_path):
+    write_options(tmp_path / "a.json", [{
+        "id": "race", "kind": "single",
+        "options": [{"id": "x", "class": {"not": "a list"}}]}])
+    with pytest.raises(OptionFormatError):
+        load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+
+
+def test_tier_parses_and_unknown_is_a_format_error(tmp_path):
+    write_options(tmp_path / "a.json", [
+        {"id": "race", "kind": "single", "tier": "P0", "options": [{"id": "x"}]},
+        {"id": "marks", "kind": "multi", "options": [{"id": "y"}]},
+    ])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("race").tier == "P0"
+    assert catalog.get("marks").tier is None  # absent -> untiered
+
+    write_options(tmp_path / "b.json", [
+        {"id": "bad", "kind": "single", "tier": "P9", "options": []}])
+    with pytest.raises(OptionFormatError):
+        load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    # resilient load: the bad file is skipped whole, recorded on errors
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False)
+    assert "bad" not in catalog
+    assert any(f == "b.json" for f, _ in catalog.errors)
+
+
+def test_tier_atomicity_bad_second_group_drops_whole_file(tmp_path):
+    write_options(tmp_path / "a.json", [
+        {"id": "ok_group", "kind": "single", "tier": "P2", "options": []},
+        {"id": "bad_group", "kind": "single", "tier": "nope", "options": []},
+    ])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False)
+    assert "ok_group" not in catalog  # _apply_file staged copy discarded
+    assert "bad_group" not in catalog
+    assert len(catalog.errors) == 1
+
+
+def test_visible_when_valid_shapes_normalize(tmp_path):
+    write_options(tmp_path / "a.json", [
+        {"id": "fur_color", "kind": "single",
+         "visible_when": {"group": "race", "class": "beastfolk-mammal"},
+         "options": []},
+        {"id": "hair_color_pattern", "kind": "single",
+         "visible_when": {"group": "hair_color_2", "any": True},
+         "options": []},
+        {"id": "genitalia_size", "kind": "single",
+         "visible_when": {"group": "genitalia", "in": ["penis", "both"]},
+         "options": []},
+    ])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("fur_color").visible_when == {
+        "group": "race", "class": "beastfolk-mammal"}
+    assert catalog.get("hair_color_pattern").visible_when == {
+        "group": "hair_color_2", "any": True}
+    assert catalog.get("genitalia_size").visible_when == {
+        "group": "genitalia", "in": ["penis", "both"]}
+
+
+@pytest.mark.parametrize("junk", [
+    "race is beastfolk",              # not an object
+    17,                               # not an object
+    True,                             # not an object
+    {},                               # no group
+    {"group": "race"},                # no predicate
+    {"group": "race", "any": True, "class": "x"},  # two predicates
+    {"group": "", "any": True},       # empty group
+    {"group": None, "any": True},     # non-string group
+    {"group": "race", "any": "yes"},  # any must be boolean true
+    {"group": "race", "in": []},      # empty in-list
+    {"group": "race", "in": "human"},  # in must be a list
+    {"group": "race", "in": ["human", 3]},  # non-string member
+    {"group": "race", "class": ""},   # empty class
+    {"group": "race", "class": ["a"]},  # class must be a string
+    {"group": "race", "when": "x"},   # unknown predicate key only
+])
+def test_visible_when_junk_degrades_to_always_visible(tmp_path, junk):
+    # The doc's fallback semantics: unparsable -> ALWAYS VISIBLE, never a
+    # format error (even strict) and never a hidden group.
+    write_options(tmp_path / "a.json", [
+        {"id": "g", "kind": "single", "visible_when": junk, "options": []}])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("g").visible_when is None
+
+
+def test_visible_when_on_required_group_is_a_format_error(tmp_path):
+    # A hidden required group would make creation unsatisfiable (the payload
+    # only round-trips visible groups) — same class of load error as
+    # required-but-not-quick.
+    write_options(tmp_path / "a.json", [
+        {"id": "g", "kind": "single", "quick": True, "required": True,
+         "visible_when": {"group": "race", "any": True}, "options": []}])
+    with pytest.raises(OptionFormatError):
+        load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+
+
+def test_merge_fragment_sets_and_clears_tier_and_visible_when(tmp_path):
+    write_options(tmp_path / "10_base.json", [
+        {"id": "g", "kind": "single", "options": [{"id": "a"}]}])
+    write_options(tmp_path / "20_ext.json", [
+        {"id": "g", "tier": "P1",
+         "visible_when": {"group": "race", "any": True}}])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("g").tier == "P1"
+    assert catalog.get("g").visible_when == {"group": "race", "any": True}
+
+    write_options(tmp_path / "30_clear.json", [
+        {"id": "g", "tier": None, "visible_when": None}])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("g").tier is None
+    assert catalog.get("g").visible_when is None
+
+
+def test_merge_fragment_visible_when_on_required_group_rejected(tmp_path):
+    # The merge path runs the same structural check: an extension fragment
+    # cannot sneak a condition onto a required group.
+    write_options(tmp_path / "10_base.json", [
+        {"id": "g", "kind": "single", "quick": True, "required": True,
+         "options": [{"id": "a"}]}])
+    write_options(tmp_path / "20_ext.json", [
+        {"id": "g", "visible_when": {"group": "race", "any": True}}])
+    with pytest.raises(OptionFormatError):
+        load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+
+
+def test_bundled_catalog_backward_compatible_untouched_by_5_6a():
+    # The existing seven data files predate class/tier/visible_when: they must
+    # load with zero errors and every group untiered + unconditional.
+    catalog = load_option_catalog()
+    assert catalog.errors == []
+    for group in catalog.groups():
+        assert group.tier is None
+        assert group.visible_when is None
+        for opt in group.options:
+            assert opt.classes == ()
+
+
+def test_gated_directory_is_structurally_absent_when_not_passed(tmp_path):
+    # §11 Layer-3: the gate is WHICH DIRECTORIES LOAD, never a filter. An
+    # ungated load lacks the gated group and the gated option appended to an
+    # ungated group.
+    ungated = tmp_path / "options"
+    gated = tmp_path / "options_gated"
+    ungated.mkdir()
+    gated.mkdir()
+    write_options(ungated / "10_wardrobe.json", [
+        {"id": "wardrobe", "kind": "single",
+         "options": [{"id": "casual", "prompt": "casual clothes"}]}])
+    write_options(gated / "90_intimate.json", [
+        {"id": "wardrobe", "options": [{"id": "nude", "prompt": "nude"}]},
+        {"id": "chest_shape2", "kind": "single", "tier": "P2",
+         "options": [{"id": "round"}]},
+    ])
+    closed = load_option_catalog(dirs=[ungated], include_bundled=False, strict=True)
+    assert "chest_shape2" not in closed
+    assert not closed.get("wardrobe").has_option("nude")
+    assert not closed.validate_selection("wardrobe", "nude")
+
+    open_ = load_option_catalog(dirs=[ungated, gated],
+                                include_bundled=False, strict=True)
+    assert "chest_shape2" in open_
+    assert open_.get("wardrobe").has_option("nude")
+    assert open_.get("chest_shape2").tier == "P2"

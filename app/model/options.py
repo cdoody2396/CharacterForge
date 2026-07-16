@@ -31,9 +31,33 @@ File format (one JSON object per file):
                                        # into image prompts (default true;
                                        # false for non-visual groups such as
                                        # personality/voice — Stage 3)
+          "tier": "P1",                # (5.6a) prompt-window ordering tier
+                                       # (P0|P1|P2|P3, closed vocabulary;
+                                       # unknown -> load-time format error).
+                                       # Decoupled from `order`, which keeps
+                                       # driving form layout — the assembler
+                                       # buckets P0..P3 then untiered so
+                                       # P0+P1 render-identity stays inside
+                                       # the first 77-token CLIP window.
+          "visible_when": {            # (5.6a) data-driven conditionality,
+            "group": "race",           # evaluated FRONT-END against live
+            "class": "beastfolk-mammal"  # selections. Exactly one predicate:
+          },                           #   "any": true   — group has a value
+                                       #   "in": [ids]   — selection in list
+                                       #   "class": "c"  — selected option
+                                       #                   carries class c
+                                       # Absent or unparsable -> the group is
+                                       # ALWAYS VISIBLE (degrade, never a
+                                       # format error) — the V2 doc's
+                                       # fallback semantics. Forbidden on a
+                                       # `required` group (a hidden required
+                                       # group would make creation
+                                       # unsatisfiable — load-time error).
           "options": [                 # for single/multi/tags
             {"id": "human", "label": "Human", "prompt": "human",
              "aliases": ["person"], "tags": ["mammal"],
+             "class": ["near-human"],  # (5.6a) class metadata visible_when
+                                       # conditions read (string or list)
              "color": "#c99b6f",       # optional swatch hint for the UI
              "image": "thumbs/human.png"}  # (5.5c) optional picker thumbnail,
                                        # relative to the option directory
@@ -68,6 +92,14 @@ leave a bundled group half-mutated.
 Loading order: bundled definitions (``app/data/options``) first, then any
 user directories (e.g. the runtime ``data/options``) so user drop-ins extend
 or override the bundled set.
+
+Gated options (5.6a, §11 Layer-3 pattern): adult-only entries live in
+separate gated directories (bundled ``app/data/options_gated`` + the runtime
+``data/options_gated``), passed to :func:`load_option_catalog` only while the
+content gate is open — the ungated catalog *structurally lacks* the entries
+(and the prompt assembler, which consumes the same catalog, never sees them);
+nothing filters. Gated files should only append groups/options, not carry
+scalar overrides (they load after every ungated directory).
 """
 
 from __future__ import annotations
@@ -80,6 +112,11 @@ from pathlib import Path
 from typing import Any, Iterable
 
 BUNDLED_OPTIONS_DIR = Path(__file__).resolve().parent.parent / "data" / "options"
+# 5.6a: bundled adult-only option definitions, loaded only while the content
+# gate is open (§11 Layer-3 — the ungated catalog structurally lacks them).
+BUNDLED_GATED_OPTIONS_DIR = (
+    Path(__file__).resolve().parent.parent / "data" / "options_gated"
+)
 # Stage-5 builder option definitions, per-kind subdirs + a _shared dir
 # (DECISIONS.md §13). Loaded with include_bundled=False so the character
 # options (races, anatomy) never leak into a builder form.
@@ -98,6 +135,12 @@ RESERVED_NUMERIC_FIELDS = ("height", "weight", "muscle", "age")
 # silently fall back to a derived widget). ``None`` means "derive" — see
 # :func:`derive_widget`.
 VALID_WIDGETS = ("segmented", "chips", "swatch", "picker", "slider")
+
+# 5.6a §15 delta: the closed set of prompt-window ordering tiers. Like the
+# widget enum, an unknown value is a load-time format error (an author typo
+# must not silently demote a group to untiered). ``None`` means untiered —
+# the group keeps today's flat position semantics in the assembler.
+VALID_TIERS = ("P0", "P1", "P2", "P3")
 
 
 class OptionFormatError(ValueError):
@@ -155,6 +198,12 @@ class OptionItem:
     # at describe() time (creator.py) so a picker tile can show it; the raw
     # string is stored here untrusted, never opened by the model layer.
     image: str | None = None
+    # 5.6a §15 delta: class metadata (JSON key "class" — a Python keyword, so
+    # the internal name is ``classes``). The key ``visible_when`` conditions
+    # read: e.g. a race option carrying "beastfolk-mammal" makes fur groups
+    # conditioned on that class appear. Shipped to the browser in the option
+    # payload (creator.py) so conditions evaluate against live selections.
+    classes: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict, *, group_id: str) -> "OptionItem":
@@ -173,6 +222,7 @@ class OptionItem:
             tags=_str_tuple(data.get("tags", ()), group_id, oid, "tags"),
             color=str(color) if color is not None else None,
             image=str(image) if image is not None else None,
+            classes=_str_tuple(data.get("class", ()), group_id, oid, "class"),
         )
 
     def to_dict(self) -> dict:
@@ -187,6 +237,8 @@ class OptionItem:
             out["color"] = self.color
         if self.image:
             out["image"] = self.image
+        if self.classes:
+            out["class"] = list(self.classes)
         return out
 
 
@@ -205,6 +257,12 @@ class OptionGroup:
     # 5.5c §15 delta:
     required: bool = False  # a character cannot be constructed without a value
     widget: str | None = None  # explicit creator-widget override; None = derive
+    # 5.6a §15 delta:
+    tier: str | None = None  # prompt-window ordering (P0..P3); None = untiered
+    # Normalized visibility condition ({"group": id} + one predicate) or None
+    # for always-visible. Evaluated FRONT-END against live selections; the
+    # backend never needs record context to describe() the catalog.
+    visible_when: dict | None = None
     options: list[OptionItem] = field(default_factory=list)
     # numeric (slider/number) properties
     min: float | None = None
@@ -374,6 +432,81 @@ def _check_required_quick(group: OptionGroup, source: str) -> None:
         )
 
 
+def _coerce_tier(data: dict, source: str, group_id: str) -> str | None:
+    """Validate an explicit ``tier`` at load time (5.6a). Absent/None means
+    untiered; anything outside the closed enum is a format error so an author
+    typo surfaces at load instead of silently demoting the group out of the
+    first-window ordering contract."""
+    if "tier" not in data or data["tier"] is None:
+        return None
+    tier = str(data["tier"])
+    if tier not in VALID_TIERS:
+        raise OptionFormatError(
+            f"{source}: group {group_id!r} has invalid tier {tier!r}; "
+            f"expected one of {VALID_TIERS}"
+        )
+    return tier
+
+
+# The predicates a visible_when condition may carry — exactly one per rule.
+_VISIBLE_WHEN_PREDICATES = ("any", "in", "class")
+
+
+def _coerce_visible_when(value: object) -> dict | None:
+    """Normalize a ``visible_when`` condition (5.6a), degrading — never
+    raising. The V2 doc's fallback semantics: an absent or unparsable
+    condition means ALWAYS VISIBLE, so hand-edited junk can only make a group
+    more visible, never hide it or brick the load. A well-formed condition is
+    ``{"group": "<id>"}`` plus exactly one predicate:
+
+        "any": true    -> the referenced group has any selection
+        "in": [ids]    -> the selection is (or intersects) the listed ids
+        "class": "c"   -> a selected option in the group carries class c
+
+    Returns the canonical plain-JSON dict (bridge-safe: str/list/bool only)
+    or None for always-visible."""
+    if not isinstance(value, dict):
+        return None
+    group = value.get("group")
+    if not isinstance(group, str) or not group:
+        return None
+    preds = [k for k in _VISIBLE_WHEN_PREDICATES if k in value]
+    if len(preds) != 1:
+        return None
+    pred = preds[0]
+    if pred == "any":
+        if value["any"] is not True:
+            return None
+        return {"group": group, "any": True}
+    if pred == "in":
+        ids = value["in"]
+        if not isinstance(ids, (list, tuple)) or not ids:
+            return None
+        if not all(isinstance(v, str) and v for v in ids):
+            return None
+        return {"group": group, "in": list(ids)}
+    # pred == "class"
+    cls = value["class"]
+    if not isinstance(cls, str) or not cls:
+        return None
+    return {"group": group, "class": cls}
+
+
+def _check_visible_when_not_required(group: OptionGroup, source: str) -> None:
+    """5.6a structural rule: a ``required`` group cannot carry a visibility
+    condition. A hidden required group would make record construction
+    unsatisfiable from the form (the payload only round-trips visible
+    groups) — the same class of load-time error as required-but-not-quick.
+    Runs after every assembly/merge so neither a new file nor an extension
+    fragment can combine the two."""
+    if group.required and group.visible_when is not None:
+        raise OptionFormatError(
+            f"{source}: group {group.id!r} is required but carries "
+            f"'visible_when'; a required group must be unconditionally "
+            f"visible (5.6a) — creation would otherwise be unsatisfiable"
+        )
+
+
 def _opt_str(value: object) -> str | None:
     """Normalize an optional string property (region/attribute/unit/section):
     None stays None (explicit null clears), anything else becomes str."""
@@ -451,6 +584,12 @@ def _merge_group(existing: OptionGroup, data: dict, source: str) -> None:
         existing.required = bool(data["required"])
     if "widget" in data:
         existing.widget = _coerce_widget(data, source, gid)
+    if "tier" in data:
+        existing.tier = _coerce_tier(data, source, gid)
+    if "visible_when" in data:
+        # replace wholesale; an explicit null (or junk) clears to
+        # always-visible — the doc's degrade semantics
+        existing.visible_when = _coerce_visible_when(data["visible_when"])
     if "order" in data and data["order"] is not None:
         existing.order = int(data["order"])
     for key in ("min", "max", "step", "default"):
@@ -475,6 +614,7 @@ def _merge_group(existing: OptionGroup, data: dict, source: str) -> None:
     _clamp_default(existing)
     _check_numeric_reservation(existing, source)
     _check_required_quick(existing, source)
+    _check_visible_when_not_required(existing, source)
 
 
 def _new_group(data: dict, source: str) -> OptionGroup:
@@ -492,6 +632,8 @@ def _new_group(data: dict, source: str) -> OptionGroup:
         render=bool(data.get("render", True)),
         required=bool(data.get("required", False)),
         widget=_coerce_widget(data, source, gid),
+        tier=_coerce_tier(data, source, gid),
+        visible_when=_coerce_visible_when(data.get("visible_when")),
         min=_coerce_number(data, "min", source, gid),
         max=_coerce_number(data, "max", source, gid),
         step=_coerce_number(data, "step", source, gid),
@@ -506,6 +648,7 @@ def _new_group(data: dict, source: str) -> OptionGroup:
     _clamp_default(group)
     _check_numeric_reservation(group, source)
     _check_required_quick(group, source)
+    _check_visible_when_not_required(group, source)
     return group
 
 

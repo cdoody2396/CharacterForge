@@ -27,12 +27,17 @@ class Api:
     via ``window.pywebview.api``. Keep it small and validated — this is the
     UI's only doorway into the backend."""
 
-    # Settings keys the UI may write, with their validators.
+    # Settings keys the UI may write, with their validators. Boolean keys are
+    # additionally type-guarded in set_setting (True == 1 in Python).
     _SETTABLE: dict[str, Any] = {
         "models.image.variant": ("default", "heavy"),
         "models.chat.variant": ("default", "heavy"),
         "safety.logging_enabled": (True, False),
+        # 5.6a content gate: the Settings toggle writes it, then the UI
+        # reloads the options so the gated dirs (dis)appear from the catalog.
+        "content.gate_open": (True, False),
     }
+    _BOOL_KEYS = ("safety.logging_enabled", "content.gate_open")
 
     def __init__(
         self,
@@ -88,8 +93,8 @@ class Api:
         if allowed is None:
             return {"ok": False, "error": f"setting not writable from UI: {key}"}
         # Strict membership (identity/equality) — note Python treats True==1,
-        # so guard the boolean toggle by type as well.
-        if key == "safety.logging_enabled" and not isinstance(value, bool):
+        # so guard the boolean toggles by type as well.
+        if key in self._BOOL_KEYS and not isinstance(value, bool):
             return {"ok": False, "error": f"invalid value for {key}: {value!r}"}
         if value not in allowed:
             return {"ok": False, "error": f"invalid value for {key}: {value!r}"}

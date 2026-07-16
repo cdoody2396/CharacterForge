@@ -80,6 +80,8 @@ async function loadSettings() {
   $("image-variant").value = s.models.image.variant;
   $("chat-variant").value = s.models.chat.variant;
   $("logging-enabled").checked = !!s.safety.logging_enabled;
+  // Mirrors the backend's fail-closed read: only an explicit true is open.
+  $("content-gate").checked = !!(s.content && s.content.gate_open === true);
 }
 
 function bindSettings() {
@@ -91,11 +93,11 @@ function bindSettings() {
       if (res.ok) {
         feedback.textContent = "Saved.";
         feedback.classList.remove("error");
-      } else {
-        feedback.textContent = res.error;
-        feedback.classList.add("error");
-        await loadSettings(); // revert the control to persisted state
+        return true;
       }
+      feedback.textContent = res.error;
+      feedback.classList.add("error");
+      await loadSettings(); // revert the control to persisted state
     } catch (err) {
       // Bridge/persistence rejection — surface it and resync the controls
       // rather than leaving an unhandled promise rejection.
@@ -103,6 +105,7 @@ function bindSettings() {
       feedback.classList.add("error");
       try { await loadSettings(); } catch (_) { /* leave as-is */ }
     }
+    return false;
   }
 
   for (const sel of [$("image-variant"), $("chat-variant")]) {
@@ -110,6 +113,33 @@ function bindSettings() {
   }
   const toggle = $("logging-enabled");
   toggle.addEventListener("change", () => apply(toggle.dataset.key, toggle.checked));
+
+  // 5.6a content gate: the setting is read at catalog LOAD, so a flip must
+  // reload the options for the gated entries to (dis)appear — done here so
+  // the toggle works without a restart or a manual Reload options click.
+  const gate = $("content-gate");
+  gate.addEventListener("change", async () => {
+    if (!(await apply(gate.dataset.key, gate.checked))) return;
+    // Creator.reloadOptions handles its own errors and returns false rather
+    // than rejecting — check the return value, don't rely on the catch.
+    let reloaded = false;
+    try {
+      if (window.Creator && window.Creator.reloadOptions)
+        reloaded = (await window.Creator.reloadOptions()) === true;
+      else {
+        await window.pywebview.api.creator_reload_options();
+        reloaded = true;
+      }
+    } catch (_) { /* reloaded stays false */ }
+    if (reloaded) {
+      feedback.textContent = "Saved — options reloaded.";
+      feedback.classList.remove("error");
+    } else {
+      feedback.textContent =
+        "Saved, but the options reload failed — use Reload options in the creator.";
+      feedback.classList.add("error");
+    }
+  });
 }
 
 function bindFilterPanel() {
