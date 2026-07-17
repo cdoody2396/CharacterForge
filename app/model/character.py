@@ -4,7 +4,8 @@ A record is a structured prompt + a per-character identity anchor:
   - `selections`  single-choice fields (race, body type, categorical anatomy)
   - `tags`        multi-choice fields (personality traits, kinks, wardrobe)
   - `sliders`     continuous axes reserved to height / weight / muscle (§12)
-  - `free_text`   filtered prose (backstory, personality, appearance notes)
+  - `free_text`   filtered prose (nickname, signature_note, catchphrase,
+                  companion_name — the five §10 slots with `name`; 5.6d)
   - `age`         an `Age` (>= 20, structurally — see age.py)
   - `identity`    IdentityAnchor (has-LoRA, reference/LoRA paths, footprint)
 
@@ -269,6 +270,20 @@ class CatalogManifest:
         )
 
 
+def _rehome_legacy_free_text(free_text: dict) -> dict:
+    """5.6d: a stored ``appearance_notes`` note becomes ``signature_note`` (its
+    B63 successor) so old records keep rendering their visual note after the
+    free-text swap. ``signature_note`` wins if both keys are present; the legacy
+    key is dropped so it neither re-serializes nor double-renders. Retired
+    ``personality_notes``/``backstory`` blobs are left untouched — they load as
+    inert orphan free-text (never shown, never rendered), the keep+lint posture.
+    """
+    if "appearance_notes" in free_text:
+        legacy = free_text.pop("appearance_notes")
+        free_text.setdefault("signature_note", legacy)
+    return free_text
+
+
 @dataclass
 class CharacterRecord:
     name: str
@@ -408,7 +423,7 @@ class CharacterRecord:
             selections=dict(data.get("selections", {})),
             tags=dict(data.get("tags", {})),
             sliders=dict(data.get("sliders", {})),
-            free_text=dict(data.get("free_text", {})),
+            free_text=_rehome_legacy_free_text(dict(data.get("free_text", {}))),
             identity=IdentityAnchor.from_dict(data.get("identity")),
             created_at=str(data.get("created_at", _now_iso())),
             updated_at=str(data.get("updated_at", _now_iso())),

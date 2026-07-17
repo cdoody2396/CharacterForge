@@ -58,27 +58,34 @@ _MAX_THUMB_BYTES = 512 * 1024
 # user text and passes Layer 1 on every path (live check + record gate).
 FREE_TEXT_FIELDS: tuple[dict[str, Any], ...] = (
     {
-        "key": "appearance_notes",
-        "label": "Appearance notes",
+        "key": "nickname",
+        "label": "Nickname",
+        "section": "Identity",
+        "rows": 1,
+        "hint": "A shorter name, alias, or handle they go by.",
+    },
+    {
+        "key": "signature_note",
+        "label": "Signature note",
         "section": "Appearance",
         "rows": 3,
         "hint": "Specifics the pickers can't express — where the scars sit, "
                 "how the hair falls, what the tattoos depict.",
     },
     {
-        "key": "personality_notes",
-        "label": "Personality notes",
-        "section": "Personality",
-        "rows": 4,
-        "hint": "Voice, quirks, speech patterns, how they treat people.",
+        "key": "catchphrase",
+        "label": "Catchphrase",
+        "section": "Voice & Speech",
+        "rows": 2,
+        "hint": "A line they're known for — a greeting, a motto, a verbal "
+                "signature.",
     },
     {
-        "key": "backstory",
-        "label": "Backstory",
-        "section": "Backstory",
-        "rows": 7,
-        "hint": "History, relationships, world context. Tags carry the vibe; "
-                "this carries the specifics.",
+        "key": "companion_name",
+        "label": "Companion's name",
+        "section": "Companion",
+        "rows": 1,
+        "hint": "What their companion animal is called, if they have one.",
     },
 )
 _FREE_TEXT_KEYS = tuple(f["key"] for f in FREE_TEXT_FIELDS)

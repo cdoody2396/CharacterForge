@@ -48,7 +48,7 @@ def make_record(**kwargs) -> CharacterRecord:
             "chest_size": "medium",
         },
         tags={"outfit": ["plate_armor"], "marks": ["freckles"]},
-        free_text={"appearance_notes": "A crescent scar over the left eyebrow."},
+        free_text={"signature_note": "A crescent scar over the left eyebrow."},
     )
     base.update(kwargs)
     return CharacterRecord.create(**base)
@@ -187,8 +187,8 @@ def test_non_render_groups_stay_out_of_the_image_prompt(assembler, bundled_catal
     record = make_record(
         selections={
             "gender_presentation": "feminine",
-            "disposition": "warm",
-            "voice": "sultry",
+            "warmth": "warm",
+            "voice_timbre": "sultry",
         },
         tags={"traits": ["witty", "loyal"]},
     )
@@ -251,11 +251,11 @@ def test_freetext_that_saved_clean_can_still_block_in_prompt_context(
     # sexual proximity, but image-prompt context blocks it outright (R7-class
     # strictness). The record saves; the render refuses, naming the field.
     record = make_record(
-        free_text={"appearance_notes": "Grew up herding goats with the kids."}
+        free_text={"signature_note": "Grew up herding goats with the kids."}
     )
     with pytest.raises(PromptBlocked) as exc_info:
         assembler.assemble(record, bundled_catalog)
-    assert exc_info.value.source == "free_text.appearance_notes"
+    assert exc_info.value.source == "free_text.signature_note"
     assert exc_info.value.category == "minors"
 
 
@@ -320,7 +320,7 @@ def test_render_flag_loads_defaults_and_merges(tmp_path):
     assert catalog.get("g1").render is False
     bundled = load_option_catalog()
     assert bundled.get("race").render is True          # default
-    assert bundled.get("disposition").render is False  # marked chat-side
+    assert bundled.get("traits").render is False  # marked chat-side (C7, render:false)
 
 
 # -- engine ---------------------------------------------------------------------
@@ -500,7 +500,7 @@ def test_word_split_across_option_fragments_is_blocked(assembler, tmp_path):
 
 
 def test_separator_overflow_into_free_text_is_blocked(assembler, tmp_path):
-    # The second half arriving via appearance_notes (the trailing fragment)
+    # The second half arriving via signature_note (the trailing fragment)
     # is still caught by the edge-normalized join.
     (tmp_path / "80_a.json").write_text(json.dumps({
         "groups": [{"id": "g_a", "label": "A", "kind": "single", "order": 80,
@@ -509,7 +509,7 @@ def test_separator_overflow_into_free_text_is_blocked(assembler, tmp_path):
     catalog = load_option_catalog([tmp_path], include_bundled=False)
     record = make_record(
         selections={"g_a": "o"}, tags={}, sliders={},
-        free_text={"appearance_notes": "girl next door"},
+        free_text={"signature_note": "girl next door"},
     )
     with pytest.raises(PromptBlocked):
         assembler.assemble(record, catalog)
@@ -521,7 +521,7 @@ def test_ordinary_prose_does_not_reintroduce_separator_false_positives(
     # The edge-normalized join must NOT concatenate interior prose words:
     # "she shot at dawn" must stay separated, never fold to "shota".
     record = make_record(
-        free_text={"appearance_notes": "A duelist who shot a rival at dawn."}
+        free_text={"signature_note": "A duelist who shot a rival at dawn."}
     )
     ap = assembler.assemble(record, bundled_catalog)  # no PromptBlocked
     assert "shot a rival" in ap.positive
@@ -798,7 +798,7 @@ def test_generate_base_writes_frame_sidecar_and_audit(
     assert sidecar["request"]["seed"] == 42
     assert sidecar["request"]["positive"] == res["positive"]
     assert sidecar["request"]["width"] == settings.get("image_gen.width")
-    assert any(p["source"] == "free_text.appearance_notes"
+    assert any(p["source"] == "free_text.signature_note"
                for p in sidecar["pieces"])
 
     events = audit_events(audit)
@@ -821,17 +821,17 @@ def test_generate_base_same_second_same_seed_never_overwrites(service, creator):
 def test_generate_base_blocked_prompt_refuses_and_audits(service, creator, audit):
     record = saved_record(
         creator,
-        free_text={"appearance_notes": "Always around the kids at the temple."},
+        free_text={"signature_note": "Always around the kids at the temple."},
     )
     res = service.generate_base(record.id)
     assert res == {
         "ok": False, "kind": "blocked",
-        "source": "free_text.appearance_notes", "category": "minors",
+        "source": "free_text.signature_note", "category": "minors",
         "error": "image prompt blocked by the content policy (minors)",
     }
     blocks = [e for e in audit_events(audit) if e["kind"] == "filter_block"]
     assert blocks and blocks[-1]["context"] == (
-        "image.prompt.free_text.appearance_notes"
+        "image.prompt.free_text.signature_note"
     )
     assert not (creator.store.char_dir(record.id) / "reference").exists()
 
@@ -1400,7 +1400,7 @@ def test_generate_identity_blocked_prompt(service, creator, settings, ip_adapter
     # proximity) but blocks outright in the strict image-prompt context.
     record = _identity_ready(service, creator, settings, ip_adapter_dir)
     rec = creator.store.load(record.id)
-    rec.free_text["appearance_notes"] = "hanging out with the kids at recess"
+    rec.free_text["signature_note"] = "hanging out with the kids at recess"
     creator.store.save(rec)
     res = service.generate_identity(record.id)
     assert res["ok"] is False and res["kind"] == "blocked"
@@ -2261,7 +2261,7 @@ def test_train_lora_blocked_caption(creator, settings, audit, fake_engine, train
     record = _with_vetted(creator, n=2)
     # make the assembled prompt trip the strict image-prompt gate
     rec = creator.store.load(record.id)
-    rec.free_text["appearance_notes"] = "hanging out with the kids at recess"
+    rec.free_text["signature_note"] = "hanging out with the kids at recess"
     creator.store.save(rec)
     res = service.train_lora(record.id)
     assert res["ok"] is False and res["kind"] == "blocked"
@@ -2713,7 +2713,7 @@ def test_generate_catalog_blocked_record(creator, settings, audit, fake_engine,
     service = bootstrap_service(creator, settings, audit, fake_engine, factory)
     record = _catalog_ready(creator)
     rec = creator.store.load(record.id)
-    rec.free_text["appearance_notes"] = "hanging out with the kids at recess"
+    rec.free_text["signature_note"] = "hanging out with the kids at recess"
     creator.store.save(rec)
     res = service.generate_catalog(record.id)
     assert res["ok"] is False and res["kind"] == "blocked"
@@ -3537,7 +3537,7 @@ def test_generate_base_candidates_count_is_clamped(service, creator, count,
 def test_generate_base_candidates_blocked_record_refuses(service, creator):
     record = saved_record(
         creator,
-        free_text={"appearance_notes": "Always around the kids at the temple."})
+        free_text={"signature_note": "Always around the kids at the temple."})
     res = service.generate_base_candidates(record.id, 2)
     assert res["ok"] is False and res["kind"] == "blocked"
     assert not (creator.store.char_dir(record.id) / "reference").exists()
@@ -3645,7 +3645,7 @@ def test_refresh_footprint_on_a_blocked_record_is_a_quiet_noop(service, creator)
     # hand-edit the stored record into a policy block
     path = creator.store.record_path(record.id)
     blob = json.loads(path.read_text(encoding="utf-8"))
-    blob["free_text"] = {"appearance_notes": "loli content"}
+    blob["free_text"] = {"appearance_notes": "loli content"}  # legacy key: 5.6d migrates it to signature_note on load
     path.write_text(json.dumps(blob), encoding="utf-8")
     service.refresh_footprint(record.id)  # must not raise
 

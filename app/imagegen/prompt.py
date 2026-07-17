@@ -3,7 +3,7 @@
 Turns a ``CharacterRecord`` plus the loaded ``OptionCatalog`` into the
 positive/negative prompt pair the SDXL-derived model consumes. The record IS
 a structured prompt (§5): every fragment comes from data — option ``prompt``
-fragments, slider ``prompt_ranges``, and the filtered ``appearance_notes``
+fragments, slider ``prompt_ranges``, and the filtered ``signature_note``
 free text — so a drop-in option file changes rendering with no code change
 (§15), exactly as it changes the creator.
 
@@ -18,7 +18,7 @@ and truncates around 75; see docs/IMAGE_PIPELINE.md):
                               V2 first-window contract; an untiered catalog
                               keeps the old flat creator order. Groups with
                               ``render: false`` are chat-side only)
-  5. appearance_notes        (the one image-relevant free-text field)
+  5. signature_note          (the one image-relevant free-text field)
 
 Safety wiring (§11):
 
@@ -48,9 +48,11 @@ from ..safety import Layer1Filter, get_filter
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
-# The free-text fields that feed the image prompt. Backstory and personality
-# notes are chat-side context (Stage 6d), not visual signal.
-IMAGE_FREE_TEXT_KEYS = ("appearance_notes",)
+# The free-text fields that feed the image prompt. signature_note (formerly
+# appearance_notes, 5.6d) is the one visual free-text slot; nickname,
+# catchphrase and companion_name are chat-side context (Stage 6d), not visual
+# signal, so they are absent here and never enter the image prompt.
+IMAGE_FREE_TEXT_KEYS = ("signature_note",)
 
 # The builder free-text field that feeds a SCENE background prompt (Stage 5,
 # §13). The scenario/persona/event notes are chat-side, never rendered.
@@ -109,7 +111,7 @@ class PromptBlocked(ValueError):
     """A prompt fragment (or the assembled prompt) hit the Layer-1 gate.
 
     ``source`` names where the text came from ("selections.race",
-    "free_text.appearance_notes", "assembled", ...) so the UI can point at
+    "free_text.signature_note", "assembled", ...) so the UI can point at
     the field — or at the drop-in option file — responsible.
     """
 

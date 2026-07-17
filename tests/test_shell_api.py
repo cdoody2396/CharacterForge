@@ -205,7 +205,7 @@ def test_creator_prompt_preview_gates_still_run(api, creator):
     assert res["ok"] is False and res["kind"] == "age"
     res2 = api.creator_prompt_preview({
         "age": 25, "selections": {"race": "elf"},
-        "free_text": {"appearance_notes": "a young loli girl"},
+        "free_text": {"signature_note": "a young loli girl"},
     })
     assert res2["ok"] is False and res2["kind"] == "blocked"
     before = len(creator.store.list_ids())

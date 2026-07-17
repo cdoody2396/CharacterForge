@@ -68,10 +68,10 @@ def test_race_is_the_only_p0(gated_catalog):
 def test_every_tier_is_valid_and_render_b_groups_are_tiered(gated_catalog):
     for g in gated_catalog.groups():
         assert g.tier in (None, "P0", "P1", "P2", "P3")
-        # every render-side selection group carries a tier — only the numeric
-        # age group and the Subset-C (render:false) groups stay untiered
-        if g.render and g.is_selection and g.id not in ("disposition",
-                                                        "traits", "voice"):
+        # every render-side selection group carries a tier — the numeric age
+        # group and the Subset-C/D (render:false) chat-side groups short-circuit
+        # here on `g.render` and stay untiered
+        if g.render and g.is_selection:
             assert g.tier is not None, f"render group {g.id!r} untiered"
 
 
@@ -317,7 +317,7 @@ def _maximal_record(catalog, race, extra, gated):
             o.id for o in catalog.get("elemental_marks").options]
     return CharacterRecord.create(
         name=f"Maximal {race}", age=140, selections=selections, tags=tags,
-        free_text={"appearance_notes": "a crescent scar over one brow"})
+        free_text={"signature_note": "a crescent scar over one brow"})
 
 
 def test_maximal_family_records_assemble_gate_open(gated_catalog, assembler):
@@ -424,3 +424,140 @@ def test_describe_ships_v2_conditions_and_classes(tmp_path, audit):
     described = creator.describe()
     ids = {g["id"] for g in described["groups"]}
     assert "genitalia" not in ids and "chest_shape" not in ids
+
+
+# -- Subset C/D (5.6d): render:false chat-side vocabulary ---------------------
+
+# doc-derived group -> option count (CHARACTER_VOCABULARY_V2.md §5 C1-C31,
+# §6 D1-D34). C25 catchphrase + companion_name are free-text slots (flag 10),
+# not groups; the D-vi builder handoff is home:builder, not authored here.
+# quirks enumerates 36 (header ~36); occupation enumerates 151 (header ~125);
+# fav_food enumerates 35 (header 36) - the enumerated lists are authoritative.
+_CD_GROUPS = {
+    # C-i/ii/iii (50_mind.json)
+    "warmth": 5, "energy": 5, "assertiveness": 5, "candor": 5, "impulse": 5,
+    "default_mood": 9, "traits": 71, "flaws": 28, "quirks": 36, "vices": 15,
+    "values": 22, "moral_compass": 5, "fears": 22, "near_goal": 30,
+    "life_dream": 20, "lines_never_cross": 16, "intellect_style": 8,
+    "skills": 72, "signature_skill": 72,
+    # C-iv/v (55_speech.json)
+    "voice_timbre": 20, "speech_pace": 5, "speech_register": 6,
+    "speech_patterns": 26, "verbal_tic": 14, "accent_flavor": 14, "laugh": 8,
+    "expressiveness": 5, "temper_fuse": 5, "affection_style": 10,
+    "comfort_ritual": 14,
+    # D (70_life.json)
+    "setting": 31, "roots": 9, "locale": 24, "social_standing": 7,
+    "reputation": 6, "legal_status": 7, "occupation": 151, "workplace": 38,
+    "job_feeling": 5, "origin_story": 20, "family_now": 8, "siblings": 5,
+    "defining_events": 52, "secrets": 18, "turning_point": 16,
+    "living_situation": 17, "finances": 6, "companion": 15, "hobbies": 61,
+    "fav_food": 35, "disliked_food": 14, "music_taste": 22, "pet_peeves": 20,
+    "with_strangers": 9, "warming_pace": 5, "with_friends": 10,
+    "toward_authority": 6, "in_conflict": 7, "trust": 5, "when_interested": 8,
+    "attachment_behavior": 5, "jealousy": 5, "address_habits": 8,
+    "avoided_topics": 14,
+}
+
+_REQ7 = {
+    "race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
+    "hair_color": "black", "hair_style": "bob", "eye_color": "brown",
+    "body_type": "average",
+}
+
+
+def _cd_maximal_record(catalog):
+    """The required-7 plus EVERY Subset C/D option (every single's first option
+    + every option of each multi, incl. the 72 skills / 72 signature_skill).
+    Constructing it runs the record's Layer-1 gate over every C/D option id in
+    the strict 'prompt' context (character.py) - the real gating surface for
+    render:false vocabulary, since the fragments never reach image assembly."""
+    selections = dict(_REQ7)
+    tags = {}
+    for gid in _CD_GROUPS:
+        g = catalog.get(gid)
+        if g.multi:
+            tags[gid] = [o.id for o in g.options]
+        else:
+            selections[gid] = g.options[0].id
+    return CharacterRecord.create(
+        name="CD Maximal", age=140, selections=selections, tags=tags)
+
+
+def test_cd_group_counts_match_the_doc(gated_catalog):
+    for gid, n in _CD_GROUPS.items():
+        g = gated_catalog.get(gid)
+        assert g is not None, f"missing C/D group {gid!r}"
+        assert not g.render, f"C/D group {gid!r} must be render:false"
+        assert len(g.options) == n, (gid, len(g.options), n)
+    # C19 signature_skill mirrors C18 skills, conditioned on it having a value;
+    # skills itself must stay unconditioned (authoring note 2 - a conditional
+    # referent has orphan semantics)
+    ss, sk = gated_catalog.get("signature_skill"), gated_catalog.get("skills")
+    assert ss.visible_when == {"group": "skills", "any": True}
+    assert sk.visible_when is None
+    assert {o.id for o in ss.options} == {o.id for o in sk.options}
+    # pre-V2 disposition/voice retire (keep+lint); traits id is reused by C7
+    assert gated_catalog.get("disposition") is None
+    assert gated_catalog.get("voice") is None
+    assert gated_catalog.get("traits") is not None
+
+
+def test_maximal_cd_record_passes_prompt_context_gate(gated_catalog):
+    # constructs without ContentBlocked => every C/D option id clears Layer-1
+    # in the strict prompt context (the option-id channel on record save)
+    record = _cd_maximal_record(gated_catalog)
+    assert record.validate_against(gated_catalog) == []
+
+
+def test_cd_fragments_pass_layer1_in_prompt_context(gated_catalog):
+    # hygiene: render:false fragments never reach image assembly (so the flag-8
+    # fragment scan skips them), but they feed 6d persona injection - keep them
+    # Layer-1 clean anyway
+    bad = []
+    for gid in _CD_GROUPS:
+        for opt in gated_catalog.get(gid).options:
+            if opt.prompt and not filter_text(opt.prompt, "prompt").allowed:
+                bad.append((gid, opt.id, opt.prompt))
+    assert bad == []
+
+
+def test_render_false_cd_groups_contribute_zero_fragments(gated_catalog,
+                                                         assembler):
+    # leak check: no render:false C/D group reaches the assembled image prompt
+    record = _cd_maximal_record(gated_catalog)
+    ap = assembler.assemble(record, gated_catalog)
+    leaked = set()
+    for p in ap.pieces:
+        parts = p.source.split(".")
+        if len(parts) >= 2 and parts[0] in ("selections", "tags", "sliders"):
+            if parts[1] in _CD_GROUPS:
+                leaked.add(parts[1])
+    assert leaked == set(), f"C/D fragments leaked into the image: {leaked}"
+    # spot-check: distinctive SELECTED render:false descriptors stay absent
+    for frag in ("a soft voice", "skilled at cooking", "fears abandonment",
+                 "works as an office worker"):
+        assert frag not in ap.positive
+
+
+def test_legacy_appearance_notes_free_text_migrates_and_renders(
+        gated_catalog, assembler, tmp_path):
+    from app.model import CharacterStore
+
+    # a pre-5.6d record stored its visual note under appearance_notes
+    rec = CharacterRecord.create(
+        name="Legacy Note", age=30, selections=dict(_REQ7),
+        free_text={"appearance_notes": "a crescent scar over one brow"})
+    store = CharacterStore(tmp_path / "data")
+    store.save(rec)
+
+    loaded = store.load(rec.id)
+    # from_dict rehomes the legacy key to its B63 successor
+    assert "appearance_notes" not in loaded.free_text
+    assert loaded.free_text.get("signature_note") == \
+        "a crescent scar over one brow"
+
+    # ...and it still feeds the image prompt (signature_note is the one visual
+    # free-text slot after the swap)
+    ap = assembler.assemble(loaded, gated_catalog)
+    assert "a crescent scar over one brow" in ap.positive
+    assert any(p.source == "free_text.signature_note" for p in ap.pieces)

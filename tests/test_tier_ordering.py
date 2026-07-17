@@ -327,7 +327,7 @@ def test_real_catalog_p0_p1_fit_the_first_window(race, settings, assembler):
     tags["outfit_palette"] = ["burgundy", "gold"]
     record = CharacterRecord.create(
         name="Maximal", age=140, selections=selections, tags=tags,
-        free_text={"appearance_notes":
+        free_text={"signature_note":
                    "a crescent scar over one brow, opal pendant"})
     assert record.validate_against(catalog) == []
 

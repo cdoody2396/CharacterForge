@@ -438,7 +438,7 @@ def test_detailed_create_full_round_trips(creator):
             "eye_color": "gold", "body_type": "curvy", "chest_size": "large",
             "hips": "wide", "apparent_age": "30s", "height_band": "tall",
             "archetype": "mage", "horns": "curved_back", "tail": "spade_demon",
-            "disposition": "fiery", "voice": "sultry",
+            "voice_timbre": "sultry", "warmth": "warm",
         },
         "tags": {
             "traits": ["confident", "witty", "ambitious"],
@@ -446,9 +446,9 @@ def test_detailed_create_full_round_trips(creator):
             "marks": ["freckles", "beauty_mark"],
         },
         "free_text": {
-            "backstory": "Exiled court mage of an infernal duchy.",
-            "personality_notes": "Sharp tongue, softer center.",
-            "appearance_notes": "Curved horns swept back; ember-red skin.",
+            "catchphrase": "Exiled court mage of an infernal duchy.",
+            "nickname": "Sharp tongue, softer center.",
+            "signature_note": "Curved horns swept back; ember-red skin.",
         },
     })
     assert res["ok"] is True
@@ -456,7 +456,7 @@ def test_detailed_create_full_round_trips(creator):
     record = creator.store.load(res["id"])
     assert record.selections["archetype"] == "mage"
     assert record.tags["marks"] == ["freckles", "beauty_mark"]
-    assert record.free_text["backstory"].startswith("Exiled")
+    assert record.free_text["catchphrase"].startswith("Exiled")
     assert record.selections["chest_size"] == "large"
     assert record.validate_against(creator.catalog) == []
 
@@ -644,13 +644,13 @@ def test_free_text_unknown_key_rejected(creator):
 
 def test_free_text_empty_dropped_and_length_capped(creator):
     res = creator.create_character(quick_payload(
-        mode="detailed", free_text={"backstory": "   "}))
+        mode="detailed", free_text={"signature_note": "   "}))
     assert res["ok"] is True
-    assert "backstory" not in creator.store.load(res["id"]).free_text
+    assert "signature_note" not in creator.store.load(res["id"]).free_text
 
     res = creator.create_character(quick_payload(
-        mode="detailed", free_text={"backstory": "x" * (TEXT_MAX_LEN + 1)}))
-    assert res["ok"] is False and res["field"] == "free_text.backstory"
+        mode="detailed", free_text={"signature_note": "x" * (TEXT_MAX_LEN + 1)}))
+    assert res["ok"] is False and res["field"] == "free_text.signature_note"
 
 
 # -- DoD: all free text passes through Layer 1 -------------------------------
@@ -670,9 +670,9 @@ def test_blocked_name_rejected_and_audited(creator, audit):
 
 def test_blocked_free_text_rejected_with_field(creator):
     res = creator.create_character(quick_payload(
-        mode="detailed", free_text={"backstory": "she is a loli"}))
+        mode="detailed", free_text={"signature_note": "she is a loli"}))
     assert res["ok"] is False and res["kind"] == "blocked"
-    assert res["field"] == "free_text.backstory"
+    assert res["field"] == "free_text.signature_note"
     assert creator.store.list_ids() == []
 
 
@@ -738,7 +738,7 @@ def test_clean_adult_content_passes(creator):
         mode="detailed",
         name="Twenty-Two",
         age=22,
-        free_text={"backstory": "A twenty-two year old adult courtesan."},
+        free_text={"signature_note": "A twenty-two year old adult courtesan."},
     ))
     assert res["ok"] is True
 
@@ -850,11 +850,11 @@ def test_update_render_change_marks_catalog_and_cache_stale(creator):
 def test_update_non_visual_edit_does_not_mark_stale(creator):
     cid = _created(creator)
     _forge_manifests(creator.store, cid)
-    # a rename + personality notes edit renders identically (name and
-    # render:false groups never enter the prompt)
+    # a rename + catchphrase edit renders identically (name and the non-visual
+    # free-text slots never enter the image prompt)
     res = creator.update_character(cid, edit_payload(
         name="A Whole New Name",
-        free_text={"personality_notes": "Now quite chatty."}))
+        free_text={"catchphrase": "Now quite chatty."}))
     assert res["ok"] is True
     assert res["render_changed"] is False
     assert res["stale_marked"] == {"catalog": False, "cache": False}
@@ -883,11 +883,11 @@ def test_update_apparent_age_change_is_render_relevant(creator):
     assert creator.store.load_catalog(cid).stale is True
 
 
-def test_update_appearance_notes_are_render_relevant(creator):
+def test_update_signature_note_is_render_relevant(creator):
     cid = _created(creator)
     _forge_manifests(creator.store, cid)
     res = creator.update_character(cid, edit_payload(
-        free_text={"appearance_notes": "a crescent scar over one brow"}))
+        free_text={"signature_note": "a crescent scar over one brow"}))
     assert res["ok"] is True and res["render_changed"] is True
 
 
@@ -938,7 +938,7 @@ def test_update_gates_rerun_blocked_content(creator, audit):
     cid = _created(creator)
     res = creator.update_character(cid, {
         "name": "Seren", "age": 27,
-        "free_text": {"backstory": "loli"},
+        "free_text": {"signature_note": "loli"},
     })
     assert res["ok"] is False and res["kind"] == "blocked"
     assert creator.store.load(cid).free_text == {}  # nothing persisted

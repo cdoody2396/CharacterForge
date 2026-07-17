@@ -465,7 +465,7 @@ def test_get_character_round_trips_form_fields(creator, library):
         "mode": "detailed", "name": "Edit Me", "age": 27,
         "selections": selections,
         "tags": {"traits": ["curious"]},
-        "free_text": {"backstory": "A quiet scholar of the old library."},
+        "free_text": {"signature_note": "A quiet scholar of the old library."},
     })
     assert res["ok"] is True
     got = library.get_character(res["id"])
@@ -475,7 +475,7 @@ def test_get_character_round_trips_form_fields(creator, library):
     assert got["tags"] == {"traits": ["curious"]}
     assert got["sliders"] == {}
     assert got["free_text"] == {
-        "backstory": "A quiet scholar of the old library."}
+        "signature_note": "A quiet scholar of the old library."}
     assert got["identity"] == {"has_lora": False, "has_reference": False}
     assert got["issues"] == []
 
