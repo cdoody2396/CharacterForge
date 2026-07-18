@@ -12,10 +12,11 @@ from __future__ import annotations
 import copy
 import json
 import os
-import tempfile
 import threading
 from pathlib import Path
 from typing import Any
+
+from ..common.io import atomic_write_json
 
 DEFAULTS: dict[str, Any] = {
     "schema_version": 1,
@@ -276,26 +277,10 @@ class Settings:
         self.save()
 
     def save(self) -> None:
-        """Atomic write under a lock: a unique temp file in the same dir +
-        os.replace, so a crash mid-write can never leave a half-written file
-        and concurrent writers (pywebview dispatches each bridge call on its
-        own thread) cannot race a shared temp path."""
+        """Atomic write under a lock (pywebview dispatches each bridge call on
+        its own thread; the shared helper is lock-free by design)."""
         with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            payload = json.dumps(self._data, indent=2, ensure_ascii=False) + "\n"
-            fd, tmp_name = tempfile.mkstemp(
-                dir=self.path.parent, prefix=self.path.name + ".", suffix=".tmp"
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    fh.write(payload)
-                os.replace(tmp_name, self.path)
-            except BaseException:
-                try:
-                    os.unlink(tmp_name)
-                except OSError:
-                    pass
-                raise
+            atomic_write_json(self.path, self._data)
 
     # -- dotted-path access ---------------------------------------------------
 

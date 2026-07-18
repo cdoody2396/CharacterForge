@@ -19,10 +19,11 @@ prohibited state.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 
+# Permanent re-export: the store is the historic home of this helper (the
+# Stage-3 generation sidecars and tests import it from here).
+from ..common.io import atomic_write_json  # noqa: F401
 from .bootstrap import BootstrapManifest, VettedManifest
 from .character import CatalogManifest, CharacterRecord, Footprint, ensure_safe_id
 from .lora import LoraManifest
@@ -30,24 +31,6 @@ from .lora import LoraManifest
 
 class CharacterNotFound(KeyError):
     """No record exists for the given character id."""
-
-
-def atomic_write_json(path: Path, data: dict) -> None:
-    """Crash-safe JSON write (temp file + os.replace). Shared by the store
-    and the Stage-3 pipeline's generation sidecars."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-        os.replace(tmp_name, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
 
 
 def _dir_size(path: Path) -> int:

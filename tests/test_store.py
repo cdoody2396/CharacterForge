@@ -34,6 +34,18 @@ def test_save_and_load_round_trip(store):
     assert loaded.to_dict() == record.to_dict()
 
 
+def test_atomic_write_json_is_the_shared_common_helper():
+    # O4 consolidation: one atomic-write implementation app-wide. The store's
+    # name is a permanent re-export of app.common.io's helper, and settings
+    # calls the same function instead of a hand-rolled twin.
+    from app.common import io as common_io
+    from app.config import settings as settings_mod
+    from app.model import store as store_mod
+
+    assert store_mod.atomic_write_json is common_io.atomic_write_json
+    assert settings_mod.atomic_write_json is common_io.atomic_write_json
+
+
 def test_disk_json_is_readable_and_atomic(store, tmp_path):
     record = make_record()
     store.save(record)
