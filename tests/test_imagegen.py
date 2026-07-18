@@ -698,16 +698,16 @@ def test_startup_resets_a_stale_vram_slot(tmp_path, monkeypatch):
         json.dumps({"models": {"active": "image"}}), encoding="utf-8"
     )
     monkeypatch.setattr(app_main, "DATA_DIR", data_dir)
-    settings, *_ = app_main.build_services()
+    settings = app_main.build_services().settings
     assert settings.get("models.active") is None
 
 
 def test_build_services_wires_library_over_the_shared_store(tmp_path,
                                                             monkeypatch):
-    # Wiring: build_services returns the 7-tuple (Stage-5 adds the builder
-    # service) and the LibraryService shares the creator's store + live catalog
-    # (a wiring regression in main.py would otherwise pass the hand-wired
-    # conftest fixtures).
+    # Wiring: build_services returns the named Services graph and the
+    # LibraryService shares the creator's store + live catalog (a wiring
+    # regression in main.py would otherwise pass the hand-wired conftest
+    # fixtures).
     import app.main as app_main
     from app.ui.builders import BuilderService
     from app.ui.library import LibraryService
@@ -715,11 +715,10 @@ def test_build_services_wires_library_over_the_shared_store(tmp_path,
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setattr(app_main, "DATA_DIR", data_dir)
-    result = app_main.build_services()
-    assert len(result) == 7
-    settings, audit, content_filter, creator, images, library, builders = result
+    services = app_main.build_services()
+    creator, library = services.creator, services.library
     assert isinstance(library, LibraryService)
-    assert isinstance(builders, BuilderService)
+    assert isinstance(services.builders, BuilderService)
     # shared store: a character created via the creator is visible to library
     created = creator.create_character(
         {"mode": "quick", "name": "Wired", "age": 22,

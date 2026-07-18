@@ -3,6 +3,7 @@ the single-window shell."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import STAGE, __version__
@@ -19,10 +20,20 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = APP_ROOT / "data"
 
 
-def build_services() -> tuple[
-    Settings, AuditLog, Layer1Filter, CreatorService, ImageService,
-    LibraryService, BuilderService,
-]:
+@dataclass(frozen=True)
+class Services:
+    """The wired service graph. Named fields — adding a service is additive."""
+
+    settings: Settings
+    audit: AuditLog
+    content_filter: Layer1Filter
+    creator: CreatorService
+    images: ImageService
+    library: LibraryService
+    builders: BuilderService
+
+
+def build_services() -> Services:
     """Construct the core services. Shared by the app and the test suite."""
     settings = Settings(DATA_DIR / "settings.json")
     if settings.get("models.active") is not None:
@@ -65,13 +76,17 @@ def build_services() -> tuple[
         creator.store, settings, audit,
         images=images, catalog_provider=lambda: creator.catalog,
     )
-    return (settings, audit, content_filter, creator, images, library,
-            builders)
+    return Services(
+        settings=settings, audit=audit, content_filter=content_filter,
+        creator=creator, images=images, library=library, builders=builders,
+    )
 
 
 def run() -> None:
-    (settings, audit, content_filter, creator, images, library,
-     builders) = build_services()
+    services = build_services()
+    settings, audit = services.settings, services.audit
+    images, library, builders = (services.images, services.library,
+                                 services.builders)
     audit.log("app_start", version=__version__, stage=STAGE)
     # The long-running-job runner (Stage 5.5a): backgrounds the slow image
     # operations so a 31-min train or 5-min catalog never hangs the window.
@@ -103,8 +118,8 @@ def run() -> None:
     except Exception:  # noqa: BLE001 — launch must proceed regardless
         audit.log("jobs_reconcile_failed")
     try:
-        shell.run_shell(settings, audit, content_filter, creator, images,
-                        library, builders, jobs=jobs)
+        shell.run_shell(settings, audit, services.content_filter,
+                        services.creator, images, library, builders, jobs=jobs)
     finally:
         audit.log("app_exit", version=__version__)
 
