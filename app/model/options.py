@@ -41,18 +41,29 @@ File format (one JSON object per file):
                                        # the first 77-token CLIP window.
           "visible_when": {            # (5.6a) data-driven conditionality,
             "group": "race",           # evaluated FRONT-END against live
-            "class": "beastfolk-mammal"  # selections. Exactly one predicate:
-          },                           #   "any": true   — group has a value
-                                       #   "in": [ids]   — selection in list
-                                       #   "class": "c"  — selected option
+            "class": "beastfolk-mammal"  # selections, and (5.7) BACK-END by
+          },                           # the construction gate. Exactly one
+                                       # predicate:
+                                       #   "any": true    — group has a value
+                                       #   "in": [ids]    — selection in list
+                                       #   "not_in": [ids]— (5.7) selection
+                                       #                   NOT in list; an
+                                       #                   EMPTY selection
+                                       #                   reads VISIBLE
+                                       #   "class": "c"   — selected option
                                        #                   carries class c
                                        # Absent or unparsable -> the group is
                                        # ALWAYS VISIBLE (degrade, never a
                                        # format error) — the V2 doc's
-                                       # fallback semantics. Forbidden on a
-                                       # `required` group (a hidden required
-                                       # group would make creation
-                                       # unsatisfiable — load-time error).
+                                       # fallback semantics. (5.7) A
+                                       # `required` group MAY be conditional:
+                                       # required-when-visible — the record
+                                       # gate requires it only while its
+                                       # condition holds (evaluated via
+                                       # OptionCatalog.visible_now).
+          "hint": "How this choice     # (5.7) optional plain-language UI
+            shapes renders",           # help text (group- or option-level);
+                                       # display-only, never enters prompts
           "options": [                 # for single/multi/tags
             {"id": "human", "label": "Human", "prompt": "human",
              "aliases": ["person"], "tags": ["mammal"],
@@ -204,6 +215,9 @@ class OptionItem:
     # conditioned on that class appear. Shipped to the browser in the option
     # payload (creator.py) so conditions evaluate against live selections.
     classes: tuple[str, ...] = ()
+    # 5.7 §15 delta: optional plain-language help text for the UI (tooltip /
+    # info popover). Display-only — never enters prompts or records.
+    hint: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict, *, group_id: str) -> "OptionItem":
@@ -223,6 +237,7 @@ class OptionItem:
             color=str(color) if color is not None else None,
             image=str(image) if image is not None else None,
             classes=_str_tuple(data.get("class", ()), group_id, oid, "class"),
+            hint=_opt_str(data.get("hint")),
         )
 
     def to_dict(self) -> dict:
@@ -239,6 +254,8 @@ class OptionItem:
             out["image"] = self.image
         if self.classes:
             out["class"] = list(self.classes)
+        if self.hint:
+            out["hint"] = self.hint
         return out
 
 
@@ -260,9 +277,13 @@ class OptionGroup:
     # 5.6a §15 delta:
     tier: str | None = None  # prompt-window ordering (P0..P3); None = untiered
     # Normalized visibility condition ({"group": id} + one predicate) or None
-    # for always-visible. Evaluated FRONT-END against live selections; the
-    # backend never needs record context to describe() the catalog.
+    # for always-visible. Evaluated FRONT-END against live selections for
+    # form layout, and (5.7) BACK-END by ``OptionCatalog.visible_now`` for
+    # the required-when-visible construction gate and hidden-value drop.
     visible_when: dict | None = None
+    # 5.7 §15 delta: optional plain-language help text for the UI (tooltip /
+    # info popover). Display-only — never enters prompts or records.
+    hint: str | None = None
     options: list[OptionItem] = field(default_factory=list)
     # numeric (slider/number) properties
     min: float | None = None
@@ -449,7 +470,7 @@ def _coerce_tier(data: dict, source: str, group_id: str) -> str | None:
 
 
 # The predicates a visible_when condition may carry — exactly one per rule.
-_VISIBLE_WHEN_PREDICATES = ("any", "in", "class")
+_VISIBLE_WHEN_PREDICATES = ("any", "in", "not_in", "class")
 
 
 def _coerce_visible_when(value: object) -> dict | None:
@@ -459,9 +480,16 @@ def _coerce_visible_when(value: object) -> dict | None:
     more visible, never hide it or brick the load. A well-formed condition is
     ``{"group": "<id>"}`` plus exactly one predicate:
 
-        "any": true    -> the referenced group has any selection
-        "in": [ids]    -> the selection is (or intersects) the listed ids
-        "class": "c"   -> a selected option in the group carries class c
+        "any": true     -> the referenced group has any selection
+        "in": [ids]     -> the selection is (or intersects) the listed ids
+        "not_in": [ids] -> (5.7) NO selection matches the listed ids; an
+                           empty selection reads VISIBLE — required-when-
+                           visible depends on this polarity: quick mode may
+                           not show the referenced group at all (e.g.
+                           hair_length), and hiding a required group on "no
+                           selection yet" would make quick-create
+                           unsatisfiable
+        "class": "c"    -> a selected option in the group carries class c
 
     Returns the canonical plain-JSON dict (bridge-safe: str/list/bool only)
     or None for always-visible."""
@@ -478,13 +506,13 @@ def _coerce_visible_when(value: object) -> dict | None:
         if value["any"] is not True:
             return None
         return {"group": group, "any": True}
-    if pred == "in":
-        ids = value["in"]
+    if pred in ("in", "not_in"):
+        ids = value[pred]
         if not isinstance(ids, (list, tuple)) or not ids:
             return None
         if not all(isinstance(v, str) and v for v in ids):
             return None
-        return {"group": group, "in": list(ids)}
+        return {"group": group, pred: list(ids)}
     # pred == "class"
     cls = value["class"]
     if not isinstance(cls, str) or not cls:
@@ -492,19 +520,12 @@ def _coerce_visible_when(value: object) -> dict | None:
     return {"group": group, "class": cls}
 
 
-def _check_visible_when_not_required(group: OptionGroup, source: str) -> None:
-    """5.6a structural rule: a ``required`` group cannot carry a visibility
-    condition. A hidden required group would make record construction
-    unsatisfiable from the form (the payload only round-trips visible
-    groups) — the same class of load-time error as required-but-not-quick.
-    Runs after every assembly/merge so neither a new file nor an extension
-    fragment can combine the two."""
-    if group.required and group.visible_when is not None:
-        raise OptionFormatError(
-            f"{source}: group {group.id!r} is required but carries "
-            f"'visible_when'; a required group must be unconditionally "
-            f"visible (5.6a) — creation would otherwise be unsatisfiable"
-        )
+# 5.7: the 5.6a "required groups must be unconditionally visible" load rule is
+# deleted — required-when-visible replaces it. The construction gate now takes
+# the selection-aware set from ``required_group_ids_for``, so a condition-
+# hidden required group is simply not required while hidden (and the negative
+# predicates' empty-selection-is-visible polarity keeps quick-create
+# satisfiable when the referenced group is not on the quick path).
 
 
 def _opt_str(value: object) -> str | None:
@@ -590,6 +611,8 @@ def _merge_group(existing: OptionGroup, data: dict, source: str) -> None:
         # replace wholesale; an explicit null (or junk) clears to
         # always-visible — the doc's degrade semantics
         existing.visible_when = _coerce_visible_when(data["visible_when"])
+    if "hint" in data:
+        existing.hint = _opt_str(data["hint"])
     if "order" in data and data["order"] is not None:
         existing.order = int(data["order"])
     for key in ("min", "max", "step", "default"):
@@ -614,7 +637,6 @@ def _merge_group(existing: OptionGroup, data: dict, source: str) -> None:
     _clamp_default(existing)
     _check_numeric_reservation(existing, source)
     _check_required_quick(existing, source)
-    _check_visible_when_not_required(existing, source)
 
 
 def _new_group(data: dict, source: str) -> OptionGroup:
@@ -634,6 +656,7 @@ def _new_group(data: dict, source: str) -> OptionGroup:
         widget=_coerce_widget(data, source, gid),
         tier=_coerce_tier(data, source, gid),
         visible_when=_coerce_visible_when(data.get("visible_when")),
+        hint=_opt_str(data.get("hint")),
         min=_coerce_number(data, "min", source, gid),
         max=_coerce_number(data, "max", source, gid),
         step=_coerce_number(data, "step", source, gid),
@@ -648,7 +671,6 @@ def _new_group(data: dict, source: str) -> OptionGroup:
     _clamp_default(group)
     _check_numeric_reservation(group, source)
     _check_required_quick(group, source)
-    _check_visible_when_not_required(group, source)
     return group
 
 
@@ -680,11 +702,62 @@ class OptionCatalog:
         return [g.id for g in self.groups()]
 
     def required_group_ids(self) -> tuple[str, ...]:
-        """The ids of groups a character cannot be constructed without (5.5c).
-        Every one is guaranteed ``quick`` by the load-time check, so the quick
-        path can always satisfy them. The record layer enforces the gate; this
-        is the catalog-derived required set it enforces against."""
+        """The ids of ALL ``required`` groups (5.5c), visibility-blind. Every
+        one is guaranteed ``quick`` by the load-time check, so the quick path
+        can always satisfy them. The UI needs this full static set (it
+        evaluates visibility live); the construction gate uses the
+        selection-aware :meth:`required_group_ids_for` instead (5.7)."""
         return tuple(g.id for g in self.groups() if g.required)
+
+    def required_group_ids_for(
+        self, selections: dict, tags: dict
+    ) -> tuple[str, ...]:
+        """The required set GIVEN a payload's live values (5.7): required and
+        currently visible. Required-when-visible — a condition-hidden
+        required group (skin_tone on a metal-chassis surface, hair_style on
+        bald) is not required while hidden."""
+        return tuple(
+            g.id for g in self.groups()
+            if g.required and self.visible_now(g.id, selections, tags)
+        )
+
+    def visible_now(self, group_id: str, selections: dict, tags: dict) -> bool:
+        """Server-side twin of the front-end ``visibleNow`` (creator.js) —
+        the semantics must stay byte-matching (5.7): no/unparsable condition
+        -> visible; unknown or numeric referenced group -> visible (degrade:
+        bad data may only ever make a group MORE visible); positive
+        predicates (any/in/class) need a chosen match; ``not_in`` reads
+        visible unless a chosen id matches — so an EMPTY selection is
+        visible. Non-recursive: a chain of conditions is evaluated one hop
+        deep, exactly like the client."""
+        group = self._groups.get(group_id)
+        if group is None:
+            return True
+        cond = group.visible_when
+        if not isinstance(cond, dict):
+            return True
+        ref = self._groups.get(cond.get("group"))
+        if ref is None or ref.is_numeric:
+            return True
+        if ref.multi:
+            raw = (tags or {}).get(ref.id) or []
+            chosen = [str(v) for v in raw] if isinstance(raw, (list, tuple)) else []
+        else:
+            value = (selections or {}).get(ref.id)
+            chosen = [str(value)] if value not in (None, "") else []
+        if cond.get("any") is True:
+            return bool(chosen)
+        if isinstance(cond.get("in"), list):
+            return any(c in cond["in"] for c in chosen)
+        if isinstance(cond.get("not_in"), list):
+            return not any(c in cond["not_in"] for c in chosen)
+        if isinstance(cond.get("class"), str):
+            want = cond["class"]
+            return any(
+                (opt := ref.get_option(c)) is not None and want in opt.classes
+                for c in chosen
+            )
+        return True
 
     def groups(self) -> list[OptionGroup]:
         """All groups sorted by (order, id) for stable creator layout."""

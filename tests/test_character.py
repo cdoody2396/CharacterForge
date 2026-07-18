@@ -249,6 +249,46 @@ def test_validate_against_flags_missing_required():
     assert "required" in issues and "eye_color" in issues
 
 
+def _conditional_catalog(tmp_path):
+    """A minimal 5.7 catalog: required tone gated by a required surface."""
+    import json as _json
+
+    opts = tmp_path / "opts"
+    opts.mkdir()
+    (opts / "10_surface.json").write_text(_json.dumps({"groups": [
+        {"id": "skin_type", "kind": "single", "quick": True, "required": True,
+         "options": [{"id": "bare_skin"}, {"id": "metal_chassis"}]},
+        {"id": "skin_tone", "kind": "single", "quick": True, "required": True,
+         "visible_when": {"group": "skin_type", "in": ["bare_skin"]},
+         "options": [{"id": "fair"}]},
+    ]}), encoding="utf-8")
+    return load_option_catalog(dirs=[opts], include_bundled=False, strict=True)
+
+
+def test_validate_against_required_is_selection_aware(tmp_path):
+    # 5.7 required-when-visible: a legacy/hand-edited record with a hidden
+    # required group missing lints clean; visible-and-missing still lints.
+    catalog = _conditional_catalog(tmp_path)
+    chassis = CharacterRecord.create(
+        "Unit-7", 25, selections={"skin_type": "metal_chassis"})
+    assert chassis.validate_against(catalog) == []
+    bare = CharacterRecord.create(
+        "Skin", 25, selections={"skin_type": "bare_skin"})
+    issues = " ".join(bare.validate_against(catalog))
+    assert "required" in issues and "skin_tone" in issues
+
+
+def test_validate_against_lints_hidden_group_values(tmp_path):
+    # A hand-edited record holding a value for a condition-hidden group stays
+    # loadable and renders what it holds (§15 source-of-truth) — but lints.
+    catalog = _conditional_catalog(tmp_path)
+    rec = CharacterRecord.create(
+        "Edited", 25,
+        selections={"skin_type": "metal_chassis", "skin_tone": "fair"})
+    issues = " ".join(rec.validate_against(catalog))
+    assert "skin_tone" in issues and "hidden" in issues
+
+
 def test_validate_against_catalog_flags_unknown_options():
     catalog = load_option_catalog()
     record = make_record(

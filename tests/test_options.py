@@ -486,15 +486,23 @@ def test_visible_when_junk_degrades_to_always_visible(tmp_path, junk):
     assert catalog.get("g").visible_when is None
 
 
-def test_visible_when_on_required_group_is_a_format_error(tmp_path):
-    # A hidden required group would make creation unsatisfiable (the payload
-    # only round-trips visible groups) — same class of load error as
-    # required-but-not-quick.
+def test_visible_when_on_required_group_loads_required_when_visible(tmp_path):
+    # 5.7 deliberately inverts the 5.6a rule (user sign-off, 2026-07-18):
+    # required + visible_when now loads cleanly — the construction gate
+    # evaluates requiredness against live selections instead
+    # (required_group_ids_for), so a hidden required group is not required
+    # while hidden rather than an unsatisfiable form.
     write_options(tmp_path / "a.json", [
+        {"id": "race", "kind": "single", "options": [{"id": "human"}]},
         {"id": "g", "kind": "single", "quick": True, "required": True,
          "visible_when": {"group": "race", "any": True}, "options": []}])
-    with pytest.raises(OptionFormatError):
-        load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("g").required is True
+    assert catalog.get("g").visible_when == {"group": "race", "any": True}
+    # static set still lists it; the selection-aware set drops it while hidden
+    assert "g" in catalog.required_group_ids()
+    assert "g" not in catalog.required_group_ids_for({}, {})
+    assert "g" in catalog.required_group_ids_for({"race": "human"}, {})
 
 
 def test_merge_fragment_sets_and_clears_tier_and_visible_when(tmp_path):
@@ -514,16 +522,145 @@ def test_merge_fragment_sets_and_clears_tier_and_visible_when(tmp_path):
     assert catalog.get("g").visible_when is None
 
 
-def test_merge_fragment_visible_when_on_required_group_rejected(tmp_path):
-    # The merge path runs the same structural check: an extension fragment
-    # cannot sneak a condition onto a required group.
+def test_merge_fragment_visible_when_on_required_group_merges(tmp_path):
+    # 5.7: the merge path accepts a condition on a required group too — an
+    # extension fragment can make a bundled required group conditional (the
+    # skin_tone drop-in pattern).
     write_options(tmp_path / "10_base.json", [
         {"id": "g", "kind": "single", "quick": True, "required": True,
          "options": [{"id": "a"}]}])
     write_options(tmp_path / "20_ext.json", [
         {"id": "g", "visible_when": {"group": "race", "any": True}}])
-    with pytest.raises(OptionFormatError):
-        load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("g").required is True
+    assert catalog.get("g").visible_when == {"group": "race", "any": True}
+
+
+# -- 5.7 sixth format extension: not_in / required-when-visible / hint -------
+
+
+def test_visible_when_not_in_normalizes(tmp_path):
+    write_options(tmp_path / "a.json", [
+        {"id": "hair_style", "kind": "single",
+         "visible_when": {"group": "hair_length", "not_in": ["bald"]},
+         "options": []}])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("hair_style").visible_when == {
+        "group": "hair_length", "not_in": ["bald"]}
+
+
+@pytest.mark.parametrize("junk", [
+    {"group": "race", "not_in": []},            # empty list
+    {"group": "race", "not_in": "bald"},        # not a list
+    {"group": "race", "not_in": ["bald", 3]},   # non-string member
+    {"group": "race", "not_in": ["bald"], "any": True},  # two predicates
+])
+def test_visible_when_not_in_junk_degrades(tmp_path, junk):
+    write_options(tmp_path / "a.json", [
+        {"id": "g", "kind": "single", "visible_when": junk, "options": []}])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("g").visible_when is None
+
+
+def _eval_catalog(tmp_path):
+    """A small catalog exercising every predicate against every referent
+    shape: single-select, multi-select, numeric, multi-class options."""
+    write_options(tmp_path / "a.json", [
+        {"id": "race", "kind": "single", "options": [
+            {"id": "human", "class": "near-human"},
+            {"id": "ghost", "class": ["undead", "ethereal"]},
+        ]},
+        {"id": "marks", "kind": "multi", "options": [
+            {"id": "scar"}, {"id": "tattoo"}]},
+        {"id": "age", "kind": "number", "field": "age",
+         "min": 20, "max": 100},
+        {"id": "by_any", "kind": "single", "options": [],
+         "visible_when": {"group": "marks", "any": True}},
+        {"id": "by_in", "kind": "single", "options": [],
+         "visible_when": {"group": "race", "in": ["ghost"]}},
+        {"id": "by_not_in", "kind": "single", "options": [],
+         "visible_when": {"group": "race", "not_in": ["ghost"]}},
+        {"id": "by_class", "kind": "single", "options": [],
+         "visible_when": {"group": "race", "class": "ethereal"}},
+        {"id": "by_numeric", "kind": "single", "options": [],
+         "visible_when": {"group": "age", "any": True}},
+        {"id": "by_unknown", "kind": "single", "options": [],
+         "visible_when": {"group": "no_such_group", "any": True}},
+    ])
+    return load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+
+
+def test_visible_now_truth_table(tmp_path):
+    catalog = _eval_catalog(tmp_path)
+    v = catalog.visible_now
+    # any: needs a chosen value in the referenced (multi) group
+    assert v("by_any", {}, {}) is False
+    assert v("by_any", {}, {"marks": ["scar"]}) is True
+    # in: positive predicates need a match; empty selection -> hidden
+    assert v("by_in", {}, {}) is False
+    assert v("by_in", {"race": "human"}, {}) is False
+    assert v("by_in", {"race": "ghost"}, {}) is True
+    # not_in: EMPTY SELECTION IS VISIBLE (the load-bearing polarity: quick
+    # mode may not show the referenced group at all)
+    assert v("by_not_in", {}, {}) is True
+    assert v("by_not_in", {"race": "human"}, {}) is True
+    assert v("by_not_in", {"race": "ghost"}, {}) is False
+    # class: multi-class options match any of their classes
+    assert v("by_class", {}, {}) is False
+    assert v("by_class", {"race": "human"}, {}) is False
+    assert v("by_class", {"race": "ghost"}, {}) is True
+    # degrades — numeric or unknown referent, unknown group id: all visible
+    assert v("by_numeric", {}, {}) is True
+    assert v("by_unknown", {}, {}) is True
+    assert v("no_such_group", {}, {}) is True
+    # unconditional group
+    assert v("race", {}, {}) is True
+
+
+def test_required_group_ids_for_is_selection_aware(tmp_path):
+    write_options(tmp_path / "a.json", [
+        {"id": "skin_type", "kind": "single", "quick": True, "required": True,
+         "options": [{"id": "bare_skin"}, {"id": "metal_chassis"}]},
+        {"id": "skin_tone", "kind": "single", "quick": True, "required": True,
+         "visible_when": {"group": "skin_type", "in": ["bare_skin"]},
+         "options": [{"id": "fair"}]},
+    ])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert set(catalog.required_group_ids()) == {"skin_type", "skin_tone"}
+    # no surface picked yet: positive predicate -> tone hidden -> not required
+    assert set(catalog.required_group_ids_for({}, {})) == {"skin_type"}
+    assert set(catalog.required_group_ids_for(
+        {"skin_type": "bare_skin"}, {})) == {"skin_type", "skin_tone"}
+    assert set(catalog.required_group_ids_for(
+        {"skin_type": "metal_chassis"}, {})) == {"skin_type"}
+
+
+def test_hint_round_trips_on_groups_and_options(tmp_path):
+    write_options(tmp_path / "a.json", [
+        {"id": "hair_length", "kind": "single",
+         "hint": "How much hair there is; style shapes it.",
+         "options": [
+             {"id": "bald", "hint": "Hides the style and color choices."},
+             {"id": "long"},
+         ]}])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    group = catalog.get("hair_length")
+    assert group.hint == "How much hair there is; style shapes it."
+    assert group.get_option("bald").hint == "Hides the style and color choices."
+    assert group.get_option("long").hint is None
+    assert group.get_option("bald").to_dict()["hint"].startswith("Hides")
+    assert "hint" not in group.get_option("long").to_dict()
+
+
+def test_hint_merge_overrides_and_clears(tmp_path):
+    write_options(tmp_path / "10_base.json", [
+        {"id": "g", "kind": "single", "hint": "original", "options": []}])
+    write_options(tmp_path / "20_ext.json", [{"id": "g", "hint": "newer"}])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("g").hint == "newer"
+    write_options(tmp_path / "30_clear.json", [{"id": "g", "hint": None}])
+    catalog = load_option_catalog(dirs=[tmp_path], include_bundled=False, strict=True)
+    assert catalog.get("g").hint is None
 
 
 def test_bundled_catalog_is_the_v2_tiered_conditional_shape():

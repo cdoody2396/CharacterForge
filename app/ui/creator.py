@@ -118,6 +118,8 @@ def _option_payload(opt, image_resolver) -> dict:
             out["image"] = src
     if opt.classes:
         out["class"] = list(opt.classes)
+    if opt.hint:
+        out["hint"] = opt.hint
     return out
 
 
@@ -144,6 +146,7 @@ def _group_payload(group: OptionGroup, image_resolver) -> dict:
         "widget": derive_widget(group),
         "tier": group.tier,
         "visible_when": group.visible_when,
+        "hint": group.hint,
         "multi": group.multi,
         "options": [_option_payload(o, image_resolver) for o in group.options],
         "min": group.min,
@@ -258,10 +261,33 @@ class CreatorService:
             return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
         return None
 
-    def _required_group_ids(self) -> tuple[str, ...]:
-        """The catalog's required-selection set, passed to record construction
-        so a new/edited character is gated on the render-identity minimum."""
-        return self._catalog.required_group_ids()
+    def _drop_hidden_values(
+        self,
+        selections: dict[str, str],
+        tags: dict[str, list[str]],
+        sliders: dict[str, float],
+    ) -> None:
+        """5.7: remove checked payload values whose group is condition-hidden
+        given the payload itself. Evaluated against an immutable SNAPSHOT of
+        the arriving values (matching the client's single-pass ``visibleNow``
+        — order-independent), then applied. A normal client never sends
+        hidden values (buildPayload serializes visible groups only); this
+        makes the server the guarantee. Drop, not reject: after a data-file
+        change an old form state must still save (degrade posture), and
+        ``validate_against`` lints hand-edited records that hold them.
+
+        One-hop note (the documented hair_color_pattern quirk): the client
+        may serialize a group whose condition reads a value the client
+        itself dropped (pattern -> hair_color_2 under bald); here the
+        snapshot lacks that value, so the dependent group drops too —
+        exactly one evaluation hop deeper than the client, converging on
+        the same record."""
+        snap_sel = dict(selections)
+        snap_tags = {k: list(v) for k, v in tags.items()}
+        for bucket in (selections, tags, sliders):
+            for gid in [g for g in bucket
+                        if not self._catalog.visible_now(g, snap_sel, snap_tags)]:
+                del bucket[gid]
 
     def reload(self) -> dict:
         """Re-scan the option directories (a freshly dropped-in data file
@@ -494,21 +520,28 @@ class CreatorService:
         age = payload.get("age")
         if age is None or (isinstance(age, str) and not age.strip()):
             raise _Invalid("age", "an age is required")
+        selections = self._check_selections(payload.get("selections") or {})
+        tags = self._check_tags(payload.get("tags") or {})
+        sliders = self._check_sliders(payload.get("sliders") or {})
+        self._drop_hidden_values(selections, tags, sliders)
         return CharacterRecord.create(
             name=name,
             age=age,  # Age.coerce inside — AgeError surfaces as kind "age"
-            selections=self._check_selections(payload.get("selections") or {}),
-            tags=self._check_tags(payload.get("tags") or {}),
-            sliders=self._check_sliders(payload.get("sliders") or {}),
+            selections=selections,
+            tags=tags,
+            sliders=sliders,
             free_text=self._check_free_text(payload.get("free_text") or {}),
             identity=identity,  # Stage-4 edit: the anchor survives the edit
             # 5.5c render-identity minimum: a character cannot be constructed
             # (created OR edited) without every required group. Catalog-driven,
             # so a drop-in file that marks a new group required is enforced with
-            # no code change. The preview path passes () — a partial form must
-            # preview (the gate stays on every PERSISTING path).
-            required_groups=(self._required_group_ids()
-                             if required_groups is None else required_groups),
+            # no code change. 5.7: selection-aware (required-when-visible) — a
+            # condition-hidden required group is not required while hidden.
+            # The preview path passes () — a partial form must preview (the
+            # gate stays on every PERSISTING path).
+            required_groups=(
+                self._catalog.required_group_ids_for(selections, tags)
+                if required_groups is None else required_groups),
         )
 
     def preview_record(self, payload: object) -> CharacterRecord | dict:

@@ -1171,3 +1171,121 @@ def test_build_creator_without_settings_never_loads_gated(tmp_path, audit):
     write_options(data_dir / "options_gated", "90_intimate.json", GATED_FILE)
     creator = build_creator(data_dir, audit)  # no settings -> no gate to read
     assert "wardrobe_intimate" not in creator.catalog
+
+
+# -- 5.7 required-when-visible + hidden-value drop ----------------------------
+
+
+def _conditional_creator(tmp_path, audit):
+    """A creator over a minimal 5.7-shaped catalog: a required tone gated by
+    a required surface group (positive predicate), plus a bald-conditional
+    required hair_style (negative predicate) whose referenced hair_length is
+    NOT quick — the exact shapes C-4 ships."""
+    opts = tmp_path / "opts"
+    write_options(opts, "10_surface.json", {"groups": [
+        {"id": "skin_type", "kind": "single", "quick": True, "required": True,
+         "options": [{"id": "bare_skin"}, {"id": "metal_chassis"}]},
+        {"id": "skin_tone", "kind": "single", "quick": True, "required": True,
+         "visible_when": {"group": "skin_type", "in": ["bare_skin"]},
+         "options": [{"id": "fair"}]},
+        {"id": "hair_length", "kind": "single",
+         "options": [{"id": "bald"}, {"id": "long"}]},
+        {"id": "hair_style", "kind": "single", "quick": True, "required": True,
+         "visible_when": {"group": "hair_length", "not_in": ["bald"]},
+         "options": [{"id": "bob"}]},
+    ]})
+    store = CharacterStore(tmp_path / "data")
+    return CreatorService(store=store, audit=audit,
+                          option_dirs=[opts], include_bundled=False)
+
+
+def test_hidden_required_group_is_not_required(tmp_path, audit):
+    creator = _conditional_creator(tmp_path, audit)
+    res = creator.create_character({
+        "mode": "quick", "name": "Unit-7", "age": 30,
+        "selections": {"skin_type": "metal_chassis", "hair_style": "bob"}})
+    assert res["ok"] is True, res
+
+
+def test_visible_required_group_still_gates(tmp_path, audit):
+    creator = _conditional_creator(tmp_path, audit)
+    res = creator.create_character({
+        "mode": "quick", "name": "Skin", "age": 30,
+        "selections": {"skin_type": "bare_skin", "hair_style": "bob"}})
+    assert res["ok"] is False
+    assert res["kind"] == "required"
+    assert res["field"] == "selections.skin_tone"
+
+
+def test_smuggled_hidden_value_is_dropped_from_the_record(tmp_path, audit):
+    # A crafted payload sending a value for a condition-hidden group saves,
+    # but the saved record never holds it (server-side drop, 5.7).
+    creator = _conditional_creator(tmp_path, audit)
+    res = creator.create_character({
+        "mode": "quick", "name": "Unit-7", "age": 30,
+        "selections": {"skin_type": "metal_chassis", "skin_tone": "fair",
+                       "hair_style": "bob"}})
+    assert res["ok"] is True, res
+    record = creator.store.load(res["id"])
+    assert "skin_tone" not in record.selections
+    assert record.selections["skin_type"] == "metal_chassis"
+
+
+def test_not_in_polarity_empty_selection_keeps_required(tmp_path, audit):
+    # hair_length is not quick: with NO length selection, hair_style must
+    # still be required (negative predicates read visible on empty) — the
+    # quick-create satisfiability guarantee.
+    creator = _conditional_creator(tmp_path, audit)
+    res = creator.create_character({
+        "mode": "quick", "name": "NoStyle", "age": 30,
+        "selections": {"skin_type": "metal_chassis"}})
+    assert res["ok"] is False
+    assert res["kind"] == "required"
+    assert res["field"] == "selections.hair_style"
+
+
+def test_bald_unrequires_and_drops_hair_style(tmp_path, audit):
+    creator = _conditional_creator(tmp_path, audit)
+    res = creator.create_character({
+        "mode": "detailed", "name": "Bald", "age": 30,
+        "selections": {"skin_type": "metal_chassis",
+                       "hair_length": "bald", "hair_style": "bob"}})
+    assert res["ok"] is True, res
+    record = creator.store.load(res["id"])
+    assert record.selections["hair_length"] == "bald"
+    assert "hair_style" not in record.selections
+
+
+def test_edit_flipping_the_surface_drops_the_tone(tmp_path, audit):
+    # The edit path re-runs the same gate+drop, and _carry_unknown_group_values
+    # must NOT resurrect the dropped value (skin_tone is catalog-PRESENT, just
+    # condition-hidden — carry restores catalog-ABSENT groups only).
+    creator = _conditional_creator(tmp_path, audit)
+    created = creator.create_character({
+        "mode": "quick", "name": "Skin", "age": 30,
+        "selections": {"skin_type": "bare_skin", "skin_tone": "fair",
+                       "hair_style": "bob"}})
+    assert created["ok"] is True, created
+    res = creator.update_character(created["id"], {
+        "name": "Skin", "age": 30,
+        "selections": {"skin_type": "metal_chassis", "hair_style": "bob"}})
+    assert res["ok"] is True, res
+    record = creator.store.load(created["id"])
+    assert record.selections["skin_type"] == "metal_chassis"
+    assert "skin_tone" not in record.selections
+    # and the record lints clean (no hidden-value issue)
+    assert record.validate_against(creator.catalog) == []
+
+
+def test_preview_path_stays_ungated_by_required(tmp_path, audit):
+    # preview passes required_groups=() — a partial form previews even with
+    # every required group unset; the drop still applies (a preview never
+    # renders a hidden value).
+    from app.model import CharacterRecord
+
+    creator = _conditional_creator(tmp_path, audit)
+    record = creator.preview_record({
+        "name": "", "age": 30,
+        "selections": {"skin_type": "metal_chassis", "skin_tone": "fair"}})
+    assert isinstance(record, CharacterRecord)
+    assert "skin_tone" not in record.selections

@@ -439,12 +439,22 @@ class CharacterRecord:
 
         Includes any ``required`` group the record has no value for (5.5c): a
         NEW record is gated on these at .create(), but a legacy record loaded
-        from disk is not, so the gap surfaces here for the library/edit UI."""
+        from disk is not, so the gap surfaces here for the library/edit UI.
+        5.7: requiredness is selection-aware (required-when-visible), and a
+        value held by a condition-hidden group lints — app write paths can no
+        longer produce one, but hand-edited/legacy records stay loadable and
+        render what they hold (source-of-truth §15)."""
         issues: list[str] = []
-        for gid in catalog.required_group_ids():
+        for gid in catalog.required_group_ids_for(self.selections, self.tags):
             if not self.selections.get(gid):
                 issues.append(
                     f"required {gid!r}: no value set (render-identity minimum)")
+        for gid in list(self.selections) + list(self.tags):
+            if (catalog.get(gid) is not None
+                    and not catalog.visible_now(gid, self.selections, self.tags)):
+                issues.append(
+                    f"{gid!r}: value set for a group hidden by its "
+                    f"visible_when condition")
         for gid, val in self.selections.items():
             group = catalog.get(gid)
             if group is None:
