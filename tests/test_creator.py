@@ -66,9 +66,11 @@ def test_bundled_catalog_declares_sections_and_quick():
     assert race.quick is True
     assert catalog.get("archetype").quick is False
     quick_ids = {g.id for g in catalog.groups() if g.quick}
+    # 5.7 quick composition: the 8 required + header-hosted apparent_age +
+    # the chat-side personality archetype
     assert {"race", "gender_presentation", "body_type", "skin_type",
             "skin_tone", "hair_color", "hair_style", "eye_color",
-            "apparent_age"} == quick_ids  # apparent_age header-hosted (5.7)
+            "apparent_age", "personality_archetype"} == quick_ids
 
 
 def test_bundled_colors_parse():

@@ -350,13 +350,14 @@
     },
     {
       "id": "archetype",
-      "label": "Archetype",
+      "hint": "Visual class flavor in renders (armored knight, robed mage...). Personality lives in the Personality Archetype; the day job in Occupation.",
+      "label": "Class",
       "kind": "single",
       "field": "archetype",
       "order": 17,
       "section": "Identity",
       "tier": "P2",
-      "_note": "V2 A11: narrative flavor only - the day job lives in D7 occupation (5.6d). Kind changed tags->single per A11; legacy tag values load leniently and lint.",
+      "_note": "V2 A11: narrative flavor only - the day job lives in D7 occupation (5.6d). Kind changed tags->single per A11; legacy tag values load leniently and lint. 5.7 (user decision 2026-07-18): relabeled 'Class' (id + options untouched - these ARE class-like by design); the personality axis is the new personality_archetype in 50_mind.json.",
       "options": [
         { "id": "warrior", "label": "Warrior", "prompt": "warrior" },
         { "id": "knight", "label": "Knight", "prompt": "armored knight" },
