@@ -2,6 +2,7 @@
   "groups": [
     {
       "id": "ears",
+      "hint": "Renders for any race - mix freely.",
       "label": "Ears",
       "kind": "single",
       "field": "ears",
@@ -27,6 +28,7 @@
     },
     {
       "id": "horns",
+      "hint": "Renders for any race - mix freely.",
       "label": "Horns",
       "kind": "single",
       "field": "horns",
@@ -49,6 +51,7 @@
     },
     {
       "id": "tail",
+      "hint": "Renders for any race - mix freely.",
       "label": "Tail",
       "kind": "single",
       "field": "tail",
@@ -76,6 +79,7 @@
     },
     {
       "id": "wings",
+      "hint": "Renders for any race - mix freely.",
       "label": "Wings",
       "kind": "single",
       "field": "wings",
@@ -99,6 +103,7 @@
     },
     {
       "id": "fur_color",
+      "hint": "Appears when the surface is fur.",
       "label": "Fur Color",
       "kind": "single",
       "field": "fur_color",
@@ -126,6 +131,7 @@
     },
     {
       "id": "fur_pattern",
+      "hint": "Appears when the surface is fur.",
       "label": "Fur Pattern",
       "kind": "single",
       "field": "fur_pattern",
@@ -146,6 +152,7 @@
     },
     {
       "id": "scale_color",
+      "hint": "Appears when the surface is scales.",
       "label": "Scale Color",
       "kind": "single",
       "field": "scale_color",
@@ -173,6 +180,7 @@
     },
     {
       "id": "scale_sheen",
+      "hint": "Appears when the surface is scales.",
       "label": "Scale Sheen",
       "kind": "single",
       "field": "scale_sheen",
@@ -188,6 +196,7 @@
     },
     {
       "id": "feather_color",
+      "hint": "Appears when the surface is feathers.",
       "label": "Feather Color",
       "kind": "single",
       "field": "feather_color",
@@ -213,6 +222,7 @@
     },
     {
       "id": "chassis_finish",
+      "hint": "Appears on a metal-chassis surface.",
       "label": "Chassis Finish",
       "kind": "single",
       "field": "chassis_finish",
@@ -235,6 +245,7 @@
     },
     {
       "id": "chassis_seams",
+      "hint": "Construct body structure - joint lines and plating.",
       "label": "Chassis Seams",
       "kind": "single",
       "field": "chassis_seams",
@@ -251,6 +262,7 @@
     },
     {
       "id": "faceplate",
+      "hint": "Construct face treatment.",
       "label": "Face",
       "kind": "single",
       "field": "faceplate",
@@ -268,6 +280,7 @@
     },
     {
       "id": "ethereal_opacity",
+      "hint": "Appears on an ethereal surface - how solid the form reads.",
       "label": "Form Opacity",
       "kind": "single",
       "field": "ethereal_opacity",
@@ -285,6 +298,7 @@
     },
     {
       "id": "glow_color",
+      "hint": "Ambient glow for ethereal and elemental races - any surface.",
       "label": "Glow Color",
       "kind": "single",
       "field": "glow_color",
@@ -309,6 +323,7 @@
     },
     {
       "id": "lower_body",
+      "hint": "Monstrous lower half (coil, quadruped, abdomen...).",
       "label": "Lower Body",
       "kind": "single",
       "field": "lower_body",
@@ -330,6 +345,7 @@
     },
     {
       "id": "elemental_marks",
+      "hint": "Stackable elemental manifestations.",
       "label": "Manifestation",
       "kind": "multi",
       "field": "elemental_marks",
@@ -350,6 +366,7 @@
     },
     {
       "id": "undead_state",
+      "hint": "How far gone the body reads.",
       "label": "State",
       "kind": "single",
       "field": "undead_state",
@@ -368,6 +385,7 @@
     },
     {
       "id": "other_features",
+      "hint": "Stackable extras (halo, third eye, gills...).",
       "label": "Other Features",
       "kind": "multi",
       "field": "other_features",

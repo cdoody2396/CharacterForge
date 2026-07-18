@@ -2,6 +2,7 @@
   "groups": [
     {
       "id": "chest_size",
+      "hint": "Categorical by design - the pipeline honors categories, not measurements.",
       "label": "Chest",
       "kind": "single",
       "field": "chest_size",
@@ -21,6 +22,7 @@
     },
     {
       "id": "waist",
+      "hint": "Categorical by design.",
       "label": "Waist",
       "kind": "single",
       "field": "waist",
@@ -37,6 +39,7 @@
     },
     {
       "id": "hips",
+      "hint": "Categorical by design.",
       "label": "Hips",
       "kind": "single",
       "field": "hips",
@@ -54,6 +57,7 @@
     },
     {
       "id": "rear",
+      "hint": "Categorical by design.",
       "label": "Rear",
       "kind": "single",
       "field": "rear",
@@ -72,6 +76,7 @@
     },
     {
       "id": "body_hair",
+      "hint": "Categorical by design.",
       "label": "Body Hair",
       "kind": "single",
       "field": "body_hair",

@@ -2,6 +2,7 @@
   "groups": [
     {
       "id": "skin_type",
+      "hint": "What covers the body. Gates Skin Tone (skin-bearing surfaces only) and reveals the matching fur / scale / feather / chassis / ethereal groups.",
       "label": "Surface",
       "kind": "single",
       "field": "skin_type",
@@ -27,6 +28,7 @@
     },
     {
       "id": "skin_tone",
+      "hint": "Visible skin color. Only asked for when the surface includes bare or partial skin.",
       "label": "Skin Tone",
       "kind": "single",
       "field": "skin_tone",
@@ -70,6 +72,7 @@
     },
     {
       "id": "complexion",
+      "hint": "Skin finish detail (matte, dewy, weathered) - a subtle render modifier.",
       "label": "Complexion",
       "kind": "single",
       "field": "complexion",
@@ -88,6 +91,7 @@
     },
     {
       "id": "hair_color",
+      "hint": "Primary hair color in every render.",
       "label": "Hair Color",
       "kind": "single",
       "field": "hair_color",
@@ -127,6 +131,7 @@
     },
     {
       "id": "hair_color_2",
+      "hint": "Pick a second color to make the hair two-tone - the Pattern choice appears once set.",
       "label": "Second Hair Color",
       "kind": "single",
       "field": "hair_color_2",
@@ -165,6 +170,7 @@
     },
     {
       "id": "hair_color_pattern",
+      "hint": "How the two colors combine (gradient, streaks, tips...).",
       "label": "Color Pattern",
       "kind": "single",
       "field": "hair_color_pattern",
@@ -183,6 +189,7 @@
     },
     {
       "id": "hair_length",
+      "hint": "How much hair there is. Bald removes the style and color choices entirely.",
       "label": "Hair Length",
       "kind": "single",
       "field": "hair_length",
@@ -203,6 +210,7 @@
     },
     {
       "id": "hair_style",
+      "hint": "The cut and arrangement - length is set separately above.",
       "label": "Hair Style",
       "kind": "single",
       "field": "hair_style",
@@ -284,6 +292,7 @@
     },
     {
       "id": "bangs",
+      "hint": "Front fringe framing the face.",
       "label": "Bangs",
       "kind": "single",
       "field": "bangs",
@@ -303,6 +312,7 @@
     },
     {
       "id": "facial_hair",
+      "hint": "Renders regardless of gender presentation.",
       "label": "Facial Hair",
       "kind": "single",
       "field": "facial_hair",
@@ -323,6 +333,7 @@
     },
     {
       "id": "eye_color",
+      "hint": "Primary eye color in every render.",
       "label": "Eye Color",
       "kind": "single",
       "field": "eye_color",
@@ -353,6 +364,7 @@
     },
     {
       "id": "eye_color_2",
+      "hint": "Pick a second color for heterochromia (one eye each).",
       "label": "Heterochromia",
       "kind": "single",
       "field": "eye_color_2",
@@ -382,6 +394,7 @@
     },
     {
       "id": "eye_shape",
+      "hint": "Eye silhouette - a subtle face modifier.",
       "label": "Eye Shape",
       "kind": "single",
       "field": "eye_shape",
@@ -399,6 +412,7 @@
     },
     {
       "id": "eye_features",
+      "hint": "Stackable eye details (glow, slit pupils, lashes...).",
       "label": "Eye Features",
       "kind": "multi",
       "field": "eye_features",
@@ -417,6 +431,7 @@
     },
     {
       "id": "face_shape",
+      "hint": "Late-window detail - renders when the prompt has room.",
       "label": "Face Shape",
       "kind": "single",
       "field": "face_shape",
@@ -435,6 +450,7 @@
     },
     {
       "id": "lips",
+      "hint": "Late-window detail - renders when the prompt has room.",
       "label": "Lips",
       "kind": "single",
       "field": "lips",
@@ -450,6 +466,7 @@
     },
     {
       "id": "nose",
+      "hint": "Late-window detail - renders when the prompt has room.",
       "label": "Nose",
       "kind": "single",
       "field": "nose",
@@ -467,6 +484,7 @@
     },
     {
       "id": "eyebrows",
+      "hint": "Late-window detail - renders when the prompt has room.",
       "label": "Eyebrows",
       "kind": "single",
       "field": "eyebrows",
@@ -483,6 +501,7 @@
     },
     {
       "id": "makeup",
+      "hint": "Applied look - part of the character, not the scene.",
       "label": "Makeup",
       "kind": "single",
       "field": "makeup",

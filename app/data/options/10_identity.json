@@ -2,6 +2,7 @@
   "groups": [
     {
       "id": "race",
+      "hint": "Base species: sets the core look in every render, which feature groups apply, and the suggested surface.",
       "label": "Species",
       "kind": "single",
       "field": "race",
@@ -127,6 +128,7 @@
     },
     {
       "id": "hybrid_race",
+      "hint": "A second heritage blended into the prompt. Surface and features stay your choice.",
       "label": "Second Heritage",
       "kind": "single",
       "field": "hybrid_race",
@@ -251,6 +253,7 @@
     },
     {
       "id": "gender_presentation",
+      "hint": "Sets how renders are framed (feminine / masculine / androgynous subject). Identity and pronouns are chat-side only.",
       "label": "Gender Presentation",
       "kind": "single",
       "field": "gender_presentation",
@@ -268,6 +271,7 @@
     },
     {
       "id": "gender_identity",
+      "hint": "Chat-side only - never affects images.",
       "label": "Identity",
       "kind": "single",
       "field": "gender_identity",
@@ -285,6 +289,7 @@
     },
     {
       "id": "pronouns",
+      "hint": "Chat-side only - never affects images.",
       "label": "Pronouns",
       "kind": "single",
       "field": "pronouns",
@@ -304,6 +309,7 @@
     },
     {
       "id": "apparent_age",
+      "hint": "Drives the visible age in every image. The Age number is the hard adult anchor and library display; this band is what actually renders.",
       "label": "Apparent Age",
       "kind": "single",
       "field": "apparent_age",
@@ -324,6 +330,7 @@
     },
     {
       "id": "age_reality",
+      "hint": "Chat-side lore (how old they really are). Never rendered.",
       "label": "True Age Is…",
       "kind": "single",
       "field": "age_reality",

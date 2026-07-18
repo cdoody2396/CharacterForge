@@ -201,6 +201,26 @@ window.Creator = (function () {
     return wrap;
   }
 
+  // "?" info popover (5.7): click-toggled, blur-dismissed, with the native
+  // title tooltip as the hover fallback. The one tooltip primitive.
+  function infoPop(text) {
+    const holder = el("span", "info-wrap");
+    const btn = el("button", "info-btn", "?");
+    btn.type = "button";
+    btn.title = text;
+    btn.setAttribute("aria-label", "What does this affect?");
+    const pop = el("span", "hint-pop", text);
+    pop.hidden = true;
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      pop.hidden = !pop.hidden;
+    });
+    btn.addEventListener("blur", () => { pop.hidden = true; });
+    holder.appendChild(btn);
+    holder.appendChild(pop);
+    return holder;
+  }
+
   function swatchBg(option) {
     return option.color || null;
   }
@@ -484,6 +504,8 @@ window.Creator = (function () {
     if (group.widget === "slider") return numericControl(group, label, required);
     const wrap = fieldWrap(
       (group.multi ? "tags." : "selections.") + group.id, label, null, required);
+    if (group.hint)  // 5.7 §15 hint -> "?" popover on the label
+      wrap.querySelector(".field-label").appendChild(infoPop(group.hint));
     if (group.widget === "picker") pickerControl(group, wrap);
     else if (group.multi) multiRow(group, wrap, group.widget);
     else singleRow(group, wrap, group.widget,
@@ -779,17 +801,25 @@ window.Creator = (function () {
 
     const tokens = res.tokens || {};
     const meta = el("div", "prompt-meta");
+    const CLIP_EXPLAINER =
+      "The image model reads the prompt through CLIP, which attends most " +
+      "strongly to the first ~75 tokens (word pieces). Your core identity " +
+      "choices are packed into that first window; everything after the " +
+      "boundary marker still applies, just with less influence. Going over " +
+      "is fine — it only means the later, lower-priority details lean " +
+      "subtler in renders.";
     if (tokens.available) {
       const over = !tokens.within_budget;
       const chip = el("span", "token-chip" + (over ? " over" : " ok"),
         `${tokens.total} / ${tokens.content_budget} CLIP tokens`);
       meta.appendChild(chip);
+      meta.appendChild(infoPop(CLIP_EXPLAINER));
       meta.appendChild(el("span", "prompt-note", over
-        ? "Over the single-window budget — chunked encoding carries the rest, " +
-          "but fragments past the marker attend more weakly."
-        : "Within the 75-token window."));
+        ? "Over budget — later fragments attend more weakly."
+        : "Within the first window."));
     } else {
       meta.appendChild(el("span", "token-chip muted", "token count unavailable"));
+      meta.appendChild(infoPop(CLIP_EXPLAINER));
       meta.appendChild(el("span", "prompt-note",
         "The CLIP tokenizer is not on this machine — counts show on the target."));
     }

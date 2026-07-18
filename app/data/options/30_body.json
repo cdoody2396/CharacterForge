@@ -2,6 +2,7 @@
   "groups": [
     {
       "id": "body_type",
+      "hint": "Overall silhouette - the main body descriptor in every render.",
       "label": "Silhouette",
       "kind": "single",
       "field": "body_type",
@@ -28,6 +29,7 @@
     },
     {
       "id": "height_band",
+      "hint": "Species-relative height (a tall dwarf is tall for a dwarf).",
       "label": "Height",
       "kind": "single",
       "field": "height_band",
@@ -47,6 +49,7 @@
     },
     {
       "id": "muscle_def",
+      "hint": "Visible muscle definition on top of the silhouette.",
       "label": "Muscle",
       "kind": "single",
       "field": "muscle_def",

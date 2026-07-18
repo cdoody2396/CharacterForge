@@ -2,6 +2,7 @@
   "groups": [
     {
       "id": "chest_shape",
+      "hint": "Shape refinement - appears beyond a flat chest size.",
       "label": "Chest Shape",
       "kind": "single",
       "field": "chest_shape",
@@ -22,6 +23,7 @@
     },
     {
       "id": "genitalia",
+      "hint": "An explicit, independent choice - never derived from race or presentation. Configure it or leave Unspecified.",
       "label": "Configuration",
       "kind": "single",
       "field": "genitalia",
@@ -40,6 +42,7 @@
     },
     {
       "id": "genitalia_size",
+      "hint": "Appears for configurations that include a penis.",
       "label": "Size",
       "kind": "single",
       "field": "genitalia_size",
@@ -58,6 +61,7 @@
     },
     {
       "id": "grooming",
+      "hint": "Grooming state for intimate renders.",
       "label": "Grooming",
       "kind": "single",
       "field": "grooming",
