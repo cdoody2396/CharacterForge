@@ -540,8 +540,48 @@ unrepresentable-state pattern applied to option loading; Layers 1–4 unchanged.
 
 ## CURRENT STATE
 
-**Current stage: Stage 5.6 — Character Vocabulary V2 is COMPLETE (2026-07-17) — all five
-sub-stages 5.6a–5.6e DONE-HERE. → Next: Stage 6.** (split 5.6a–5.6e — see the stage block). **Session 1 (2026-07-16) shipped 5.6a + 5.6b DONE-HERE** (the §15 fifth
+**Current stage: Stage 5.7 — Optimization + Create/Library Overhaul is COMPLETE
+(2026-07-18) → Next: Stage 6 — Chat Loop.** Two passes before Stage 6, per the
+approved 2026-07-18 plan (all frozen-spec touches user-signed-off at plan approval):
+
+**Stream O (optimization, commits O1–O6):** `pytest.ini` (bare `pytest` == `pytest
+tests/`; the sd-scripts collection errors are dead); stale docs refreshed; `build_services`
+returns a named `Services` dataclass; one `atomic_write_json` in `app/common/io.py`
+(settings' hand-rolled twin removed); the three diffusers backends deduped into
+`_SDXLBackendBase` (engine.py 1107→1043); **the 3,678-line `ImageService` god-module split
+into 8 stage-scoped mixin modules** (`service_generation/bootstrap/lora/catalog/matte/
+scene/cache` + `service_shared`; service.py 518 lines; scripted verbatim moves, symtable-
+verified, zero import churn — `ARTIFACT_LOAD_ERRORS` re-exported) with the five
+missing-message/load-error near-dupes folded. The `coerce_*_config`/`preflight_*` families
+were consciously kept (grep-able, test-pinned). Validated by a real [HARDWARE] base render
+end-to-end on the 4070 + suite green.
+
+**Stream C (5.7a–5.7m, the Create/Library overhaul):** the §15 SIXTH extension —
+`not_in` predicate (empty-selection-reads-VISIBLE polarity), **required-when-visible**
+(the 5.6a unconditional-required rule deleted; the construction gate takes
+`required_group_ids_for(selections, tags)` via the new server-side `visible_now` evaluator,
+byte-matching creator.js; condition-hidden payload values DROP server-side; new
+`validate_against` lints), and the `hint` field. **The unified `skin_type` surface model**
+(user proposal): a required+quick Surface group gates `skin_tone` (asked-for exactly when
+the surface includes skin) and re-keys the fur/scale/feather/chassis/ethereal color groups
+off race class — surface decouples from race; `*_coverage` retired; `glow_color` stays
+race-keyed. Hair reordered length→style→color with bald hiding style/colors/bangs;
+`hair_style` 25→67. Creator: **tabbed sections** (badge = unmet visible required; quick
+mode stays one page), picker Curated/A–Z + class-group headers, unmistakable selected
+states, 56 authored hints + "?" popovers + a plain-language CLIP explainer, `apparent_age`
+quick + header-hosted beside Age with create-only auto-defaults (age→band, race→surface;
+manual pick wins; reopens the 2026-07-16 plain-optional decision per sign-off), `archetype`
+relabeled **Class** + new chat-side `personality_archetype` (20, quick). **Free-form
+`record.labels`** (additive, Layer-1 gated, 20×32 caps) with a creator chip-input +
+library "your tags" filter. Library rows carry presentation/race/race-classes and the
+gate-structural genitalia label; **sex / species-class / genitalia dropdowns** (the
+genitalia filter exists exactly while the gate is open — capability flag, nothing leaks).
+Profile rebuilt **two-column** (sticky identity/storage rail, wide pipeline column,
+1600px per-view cap). One-time prompt-fragment reorder: existing characters read
+`render_changed` once at next edit (accepted). Suite: 1,131 passing / 1 skipped.
+
+**Stage 5.6 — Character Vocabulary V2 is COMPLETE (2026-07-17) — all five
+sub-stages 5.6a–5.6e DONE-HERE.** (split 5.6a–5.6e — see the stage block). **Session 1 (2026-07-16) shipped 5.6a + 5.6b DONE-HERE** (the §15 fifth
 format extension — `visible_when`/`class`/`tier` + gated dirs + `content.gate_open`
 default OPEN — and the tier-bucketed assembly order with the first-window contract).
 **Session 2 (2026-07-16) shipped 5.6c DONE-HERE (1095 tests passing, 1 skipped, +22;

@@ -2,9 +2,10 @@
 
 Single-user, offline Windows app: deep character creator + consistent image
 catalog + library + chat with persistent memory. See `DECISIONS.md` (frozen
-spec) and `BUILD_PLAN.md` (stages/state). Stages 0–5.6 done (scaffold + safety
+spec) and `BUILD_PLAN.md` (stages/state). Stages 0–5.7 done (scaffold + safety
 foundation, character data model, creator UI, image pipeline, library at
-scale, builders + compositing, Vocabulary V2); next: **Stage 6 — Chat Loop**.
+scale, builders + compositing, Vocabulary V2, optimization + Create/Library
+overhaul); next: **Stage 6 — Chat Loop**.
 
 ## Launch
 
