@@ -70,6 +70,8 @@ body {
   gap: 18px;
   max-width: 1180px;      /* 5.5c: the creator uses the window at width */
   width: 100%;
+  margin-inline: auto;    /* windows wider than the cap: center instead of
+                             pinning left with a dead right gutter */
 }
 
 .head-actions { display: flex; gap: 10px; align-items: center; }
@@ -371,12 +373,15 @@ button.ghost {
 
 .lib-toolbar {
   display: flex;
+  flex-wrap: wrap;          /* narrow windows: controls drop to a second row
+                               instead of clipping the layout toggle */
   gap: 10px;
   align-items: center;
   margin-bottom: 8px;
 }
 .lib-toolbar input[type="search"] {
-  flex: 1;
+  flex: 1 1 200px;
+  min-width: 160px;
   font: inherit;
   color: var(--text);
   background: var(--bg);
@@ -789,7 +794,8 @@ button.ghost.danger, .lib-btn.ghost.danger { color: #e06c75; }
 /* grid layout: responsive cards */
 .lib-list.grid {
   display: grid; gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  /* min(360px, 100%): a lone column may shrink below 360 rather than overflow */
+  grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
 }
 /* list layout: a bounded scroller that the virtualizer paints into */
 .lib-list.list {
@@ -811,6 +817,13 @@ button.ghost.danger, .lib-btn.ghost.danger { color: #e06c75; }
 .lib-row-fp { color: var(--muted); font-size: 12px; width: 74px; text-align: right; flex: none; }
 .lib-row .lib-actions { margin: 0; flex: none; }
 .lib-confirm-hint { color: var(--muted); font-size: 11px; }
+/* narrow windows: drop the footprint column and slack so the fixed-height
+   virtualized row keeps its action buttons on screen */
+@media (max-width: 760px) {
+  .lib-row { padding: 0 8px; gap: 8px; }
+  .lib-row-fp { display: none; }
+  .lib-row .lib-btn { padding: 6px 10px; }
+}
 
 /* ---- job progress widget (5.5d) --------------------------------------- */
 
