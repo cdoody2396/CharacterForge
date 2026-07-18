@@ -13,6 +13,7 @@ function showView(name) {
   for (const b of buttons) b.classList.toggle("active", b.dataset.view === name);
   for (const view of document.querySelectorAll("#content .view"))
     view.hidden = view.id !== "view-" + name;
+  document.body.dataset.view = name; // per-view CSS (5.7 wide profile)
   if (name === "create") window.Creator.ensureStarted();
   if (name === "library") window.Library.refresh();
   if (name === "builders") window.Builders.ensureStarted();

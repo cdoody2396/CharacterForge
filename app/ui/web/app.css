@@ -658,6 +658,8 @@ button.ghost {
 @media (max-width: 900px) {
   .creator-layout { grid-template-columns: 1fr; }
   #creator-prompt { position: static; max-height: none; }
+  #profile-root { grid-template-columns: 1fr; }
+  .pf-rail { position: static; }
 }
 
 .prompt-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
@@ -833,6 +835,27 @@ button.ghost.danger, .lib-btn.ghost.danger { color: #e06c75; }
 /* ---- character profile (5.5d) ----------------------------------------- */
 
 .pf-head-row { margin-bottom: 10px; }
+/* 5.7 profile layout: wide two-column (sticky identity/storage rail + main
+   pipeline column) — the single narrow stack wasted most of a wide window */
+body[data-view="profile"] #content { max-width: 1600px; }
+#profile-root {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.pf-rail {
+  position: sticky;
+  top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.pf-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.pf-rail .pf-identity-row { flex-direction: column; }
+.pf-rail .pf-thumb.big { width: 100%; height: auto; aspect-ratio: 3 / 4; }
+
 .pf-identity-row { display: flex; gap: 18px; align-items: flex-start; }
 .pf-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .pf-age { color: var(--muted); font-weight: 400; font-size: 15px; }
@@ -858,7 +881,7 @@ button.ghost.danger, .lib-btn.ghost.danger { color: #e06c75; }
 .pf-candidates, .pf-vetted, .pf-render { margin-top: 12px; }
 .pf-grid {
   display: grid; gap: 10px; margin-top: 8px;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); /* 5.7: wider */
 }
 .pf-grid-cell {
   position: relative; padding: 0; border: 2px solid var(--panel-edge);
@@ -880,7 +903,7 @@ button.ghost.danger, .lib-btn.ghost.danger { color: #e06c75; }
 .pf-vetted-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* 5.5 acceptance: bigger, judgeable candidate tiles + full-size zoom */
-.pf-grid.wide { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.pf-grid.wide { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .pf-zoom-btn {
   position: absolute; top: 4px; left: 6px; z-index: 2;
   width: 24px; height: 24px; line-height: 22px; text-align: center;

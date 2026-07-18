@@ -809,16 +809,23 @@ window.Profile = (function () {
     const root = $("profile-root");
     root.textContent = "";
     if (!data.record.ok) return; // header already carries the error + delete
+    // 5.7 two-column layout: identity + storage in a sticky left rail, the
+    // pipeline panels in the main column — the single narrow stack left most
+    // of a wide window empty. Pure re-parenting; the panels are unchanged.
+    const rail = el("div", "pf-rail");
+    rail.appendChild(identityPanel());
+    rail.appendChild(storagePanel());
+    const main = el("div", "pf-main");
     const fb = el("p", "feedback");
     fb.id = "profile-feedback";
     fb.setAttribute("role", "status");
-    root.appendChild(fb);
+    main.appendChild(fb);
+    main.appendChild(promotionPanel());
+    main.appendChild(catalogPanel());
+    main.appendChild(posePanel());
+    root.appendChild(rail);
+    root.appendChild(main);
     applyFeedback();
-    root.appendChild(identityPanel());
-    root.appendChild(promotionPanel());
-    root.appendChild(catalogPanel());
-    root.appendChild(posePanel());
-    root.appendChild(storagePanel());
   }
 
   // ---------------------------------------------------------------- open
