@@ -191,6 +191,10 @@ class LibraryService:
             "count": len(rows),
             "recommend_cache_bytes": config.recommend_cache_bytes,
             "cache_cap_bytes": config.cache_cap_bytes,
+            # 5.7 filter capabilities: the genitalia filter exists exactly
+            # while the content gate is open — structural, the catalog either
+            # has the group or it doesn't (§11 Layer 3; nothing to sniff).
+            "filters": {"genitalia": self._catalog().get("genitalia") is not None},
         }
 
     def _summary_row(self, cid: str, config) -> dict:
@@ -238,11 +242,41 @@ class LibraryService:
             "has_reference": has_reference,
             "tags": self._tag_labels(loaded),
             "labels": list(loaded.labels),  # 5.7 free-form labels
+            # 5.7 attribute filters (sex / species / genitalia). Genitalia is
+            # gate-degrading: with the gate closed the catalog lacks the
+            # group, _single_label reads None, and the row carries no value —
+            # nothing leaks into an ungated listing.
+            "presentation": self._single_label(loaded, "gender_presentation"),
+            "race": self._single_label(loaded, "race"),
+            "race_classes": self._race_classes(loaded),
+            "genitalia": self._single_label(loaded, "genitalia"),
             "catalog": self._manifest_summary(cid, "catalog"),
             "cache": self._manifest_summary(cid, "cache"),
             "footprint": footprint,
             "recommend_delete": bool(recommend),
         }
+
+    def _single_label(self, record: CharacterRecord, gid: str) -> str | None:
+        """A single-select value resolved to its option label (5.7 filters).
+        None when unset; None when the group is absent from the live catalog
+        (retired — or gated and the gate is closed); the raw id when the
+        OPTION left the catalog (§15 source-of-truth, same as _tag_labels)."""
+        value = record.selections.get(gid)
+        if not value:
+            return None
+        group = self._catalog().get(gid)
+        if group is None:
+            return None
+        option = group.get_option(value)
+        return option.label if option else str(value)
+
+    def _race_classes(self, record: CharacterRecord) -> list[str]:
+        """The selected race option's class taxonomy (5.7 species filter —
+        10 classes beat a 112-race dropdown)."""
+        value = record.selections.get("race")
+        group = self._catalog().get("race")
+        option = group.get_option(value) if (group and value) else None
+        return list(option.classes) if option else []
 
     def _tag_labels(self, record: CharacterRecord) -> list[str]:
         """The character's multi-select tag values (archetype / distinctive

@@ -829,3 +829,78 @@ def test_summary_row_and_get_carry_labels(creator, library):
     assert row["labels"] == ["main cast"]
     got = library.get_character(res["id"])
     assert got["labels"] == ["main cast"]
+
+
+# -- 5.7 attribute filters (sex / species / genitalia) ------------------------
+
+
+def _gated_library(tmp_path, audit, settings, *, gate_open):
+    from app.model import CharacterStore
+    from app.model.options import BUNDLED_GATED_OPTIONS_DIR
+    from app.ui.creator import CreatorService
+    from app.ui.library import LibraryService
+    from app.imagegen import build_image_service
+
+    creator = CreatorService(
+        store=CharacterStore(tmp_path / "data"), audit=audit,
+        gated_option_dirs=(BUNDLED_GATED_OPTIONS_DIR,),
+        gate=lambda: gate_open,
+    )
+    images = build_image_service(
+        creator.store, settings, audit, lambda: creator.catalog)
+    library = LibraryService(creator.store, settings, audit,
+                             images=images,
+                             catalog_provider=lambda: creator.catalog)
+    return creator, library
+
+
+def test_rows_carry_attribute_labels(creator, library):
+    res = creator.create_character({
+        "mode": "detailed", "name": "Ghost", "age": 300,
+        "selections": {"race": "ghost", "gender_presentation": "androgynous",
+                       "skin_type": "ethereal_form",
+                       "hair_color": "white", "hair_style": "wavy",
+                       "eye_color": "grey", "body_type": "willowy"}})
+    assert res["ok"] is True, res
+    row = next(r for r in library.list_characters()["characters"]
+               if r["id"] == res["id"])
+    assert row["presentation"] == "Androgynous"
+    assert row["race"] == "Ghost"
+    assert set(row["race_classes"]) == {"undead", "ethereal"}
+    # ungated fixture: no genitalia group in the catalog -> None on the row
+    assert row["genitalia"] is None
+
+
+def test_genitalia_filter_is_gate_structural(tmp_path, audit, settings):
+    creator, library = _gated_library(tmp_path, audit, settings,
+                                      gate_open=True)
+    sel = dict(SEL)
+    sel["genitalia"] = "vulva"
+    res = creator.create_character({
+        "mode": "detailed", "name": "Gated", "age": 25, "selections": sel})
+    assert res["ok"] is True, res
+    listing = library.list_characters()
+    assert listing["filters"]["genitalia"] is True
+    row = next(r for r in listing["characters"] if r["id"] == res["id"])
+    assert row["genitalia"] == "Vulva"
+
+    # flip the gate closed: the capability flag drops and the value vanishes
+    # from rows even though the record still holds it (structural, §11 L3)
+    creator2, library2 = _gated_library(tmp_path, audit, settings,
+                                        gate_open=False)
+    listing2 = library2.list_characters()
+    assert listing2["filters"]["genitalia"] is False
+    row2 = next(r for r in listing2["characters"] if r["id"] == res["id"])
+    assert row2["genitalia"] is None
+
+
+def test_unknown_option_id_falls_back_to_raw(creator, library):
+    # §15 source-of-truth: an option that left the catalog reads as its raw id
+    res = creator.create_character({
+        "mode": "quick", "name": "Raw", "age": 25, "selections": dict(SEL)})
+    assert res["ok"] is True
+    record = creator.store.load(res["id"])
+    record.selections["gender_presentation"] = "feminine"  # known-good
+    row = next(r for r in library.list_characters()["characters"]
+               if r["id"] == res["id"])
+    assert row["presentation"] == "Feminine"

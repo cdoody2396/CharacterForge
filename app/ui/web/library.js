@@ -30,6 +30,9 @@ window.Library = (function () {
     search: "", sort: "updated_desc", filter: "all",
     tags: new Set(),          // selected tag labels (AND-match)
     labels: new Set(),        // selected free-form labels (AND-match, 5.7)
+    sex: "",                  // gender-presentation label filter (5.7)
+    species: "",              // race-class filter (5.7)
+    genitalia: "",            // configuration filter (5.7, gate-dependent)
     layout: "grid",           // grid | list
   };
 
@@ -93,6 +96,13 @@ window.Library = (function () {
         return true;
       });
     }
+    // 5.7 attribute filters
+    if (state.sex)
+      rows = rows.filter((r) => r.presentation === state.sex);
+    if (state.species)
+      rows = rows.filter((r) => (r.race_classes || []).includes(state.species));
+    if (state.genitalia)
+      rows = rows.filter((r) => r.genitalia === state.genitalia);
     const cmp = {
       updated_desc: (a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")),
       created_desc: (a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")),
@@ -117,6 +127,57 @@ window.Library = (function () {
     if (data) for (const r of data.characters)
       for (const l of (r.labels || [])) set.add(l);
     return [...set].sort((a, b) => a.localeCompare(b));
+  }
+
+  // 5.7 attribute-filter dropdowns: value universes come from the rows (so
+  // only values that exist are offered); the genitalia select exists exactly
+  // while the backend capability flag says the gate is open.
+  function humanizeClass(c) {
+    return String(c).split(/[-_]/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  }
+
+  function fillSelect(select, placeholder, values, current, labeler) {
+    select.textContent = "";
+    const any = el("option", null, placeholder);
+    any.value = "";
+    select.appendChild(any);
+    for (const v of values) {
+      const opt = el("option", null, labeler ? labeler(v) : v);
+      opt.value = v;
+      select.appendChild(opt);
+    }
+    select.value = values.includes(current) ? current : "";
+  }
+
+  function renderAttributeFilters() {
+    const rows = (data && data.characters) || [];
+    const uniq = (key) => [...new Set(
+      rows.map((r) => r[key]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const sexSel = $("lib-sex");
+    if (sexSel) {
+      fillSelect(sexSel, "Any sex", uniq("presentation"), state.sex);
+      if (sexSel.value !== state.sex) state.sex = sexSel.value;
+    }
+    const speciesSel = $("lib-species");
+    if (speciesSel) {
+      const classes = [...new Set(rows.flatMap((r) => r.race_classes || []))]
+        .sort((a, b) => a.localeCompare(b));
+      fillSelect(speciesSel, "Any species", classes, state.species, humanizeClass);
+      if (speciesSel.value !== state.species) state.species = speciesSel.value;
+    }
+    const genSel = $("lib-genitalia");
+    if (genSel) {
+      const enabled = !!(data && data.filters && data.filters.genitalia);
+      genSel.hidden = !enabled;
+      if (!enabled) {
+        state.genitalia = "";
+        genSel.textContent = "";
+      } else {
+        fillSelect(genSel, "Any configuration", uniq("genitalia"), state.genitalia);
+        if (genSel.value !== state.genitalia) state.genitalia = genSel.value;
+      }
+    }
   }
 
   // ------------------------------------------------------------- actions
@@ -409,6 +470,7 @@ window.Library = (function () {
     const list = $("lib-list");
     if (!list) return;
     renderTagFilter();
+    renderAttributeFilters(); // 5.7 sex / species / genitalia dropdowns
     if (!data) { list.textContent = ""; return; }
     const rows = visibleRows();
     const total = data.characters.length;
@@ -528,6 +590,15 @@ window.Library = (function () {
     state.filter = e.target.value;
     render();
   });
+  for (const id of ["lib-sex", "lib-species", "lib-genitalia"]) {
+    const sel = $(id);
+    if (sel) sel.addEventListener("change", (e) => {
+      const key = { "lib-sex": "sex", "lib-species": "species",
+                    "lib-genitalia": "genitalia" }[id];
+      state[key] = e.target.value;
+      render();
+    });
+  }
   for (const btn of $("lib-layout").children)
     btn.addEventListener("click", () => setLayout(btn.dataset.layout));
 
