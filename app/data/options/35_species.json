@@ -98,21 +98,6 @@
       ]
     },
     {
-      "id": "fur_coverage",
-      "label": "Fur Coverage",
-      "kind": "single",
-      "field": "fur_coverage",
-      "order": 54,
-      "section": "Species Features",
-      "tier": "P2",
-      "visible_when": { "group": "race", "class": "beastfolk-mammal" },
-      "options": [
-        { "id": "accents", "label": "Accents Only (Ears / Tail / Paws)", "prompt": "fur accents" },
-        { "id": "partial", "label": "Partial", "prompt": "partial body fur" },
-        { "id": "full", "label": "Full", "prompt": "full body fur" }
-      ]
-    },
-    {
       "id": "fur_color",
       "label": "Fur Color",
       "kind": "single",
@@ -120,7 +105,8 @@
       "order": 55,
       "section": "Species Features",
       "tier": "P1",
-      "visible_when": { "group": "race", "class": "beastfolk-mammal" },
+      "visible_when": { "group": "skin_type", "in": ["fur_over_skin", "full_fur"] },
+      "_note": "5.7: re-keyed from race class to the unified skin_type surface (fur_coverage retired - its coverage prompts live on the skin_type compounds).",
       "options": [
         { "id": "white", "label": "White", "prompt": "white fur", "color": "#f2f2f2" },
         { "id": "cream", "label": "Cream", "prompt": "cream fur", "color": "#f0e3c8" },
@@ -146,7 +132,7 @@
       "order": 56,
       "section": "Species Features",
       "tier": "P2",
-      "visible_when": { "group": "race", "class": "beastfolk-mammal" },
+      "visible_when": { "group": "skin_type", "in": ["fur_over_skin", "full_fur"] },
       "options": [
         { "id": "solid", "label": "Solid", "prompt": "" },
         { "id": "striped", "label": "Striped", "prompt": "striped fur" },
@@ -159,21 +145,6 @@
       ]
     },
     {
-      "id": "scale_coverage",
-      "label": "Scale Coverage",
-      "kind": "single",
-      "field": "scale_coverage",
-      "order": 57,
-      "section": "Species Features",
-      "tier": "P2",
-      "visible_when": { "group": "race", "class": "scaled" },
-      "options": [
-        { "id": "accents", "label": "Accents", "prompt": "scale accents" },
-        { "id": "partial", "label": "Partial", "prompt": "partial scales" },
-        { "id": "full", "label": "Full", "prompt": "full body scales" }
-      ]
-    },
-    {
       "id": "scale_color",
       "label": "Scale Color",
       "kind": "single",
@@ -181,7 +152,8 @@
       "order": 58,
       "section": "Species Features",
       "tier": "P1",
-      "visible_when": { "group": "race", "class": "scaled" },
+      "visible_when": { "group": "skin_type", "in": ["scales_over_skin", "full_scales"] },
+      "_note": "5.7: re-keyed from race class to skin_type (scale_coverage retired).",
       "options": [
         { "id": "emerald", "label": "Emerald", "prompt": "emerald scales", "color": "#2f9e5f" },
         { "id": "jade", "label": "Jade", "prompt": "jade scales", "color": "#6fae8f" },
@@ -207,26 +179,11 @@
       "order": 59,
       "section": "Species Features",
       "tier": "P2",
-      "visible_when": { "group": "race", "class": "scaled" },
+      "visible_when": { "group": "skin_type", "in": ["scales_over_skin", "full_scales"] },
       "options": [
         { "id": "matte", "label": "Matte", "prompt": "" },
         { "id": "glossy", "label": "Glossy", "prompt": "glossy scales" },
         { "id": "iridescent", "label": "Iridescent", "prompt": "iridescent scales" }
-      ]
-    },
-    {
-      "id": "feather_coverage",
-      "label": "Feather Coverage",
-      "kind": "single",
-      "field": "feather_coverage",
-      "order": 60,
-      "section": "Species Features",
-      "tier": "P2",
-      "visible_when": { "group": "race", "class": "feathered" },
-      "options": [
-        { "id": "accents", "label": "Accents", "prompt": "feather accents" },
-        { "id": "partial", "label": "Partial", "prompt": "partial plumage" },
-        { "id": "full", "label": "Full", "prompt": "full plumage" }
       ]
     },
     {
@@ -237,7 +194,8 @@
       "order": 61,
       "section": "Species Features",
       "tier": "P1",
-      "visible_when": { "group": "race", "class": "feathered" },
+      "visible_when": { "group": "skin_type", "in": ["feathers_over_skin", "full_plumage"] },
+      "_note": "5.7: re-keyed from race class to skin_type (feather_coverage retired).",
       "options": [
         { "id": "white", "label": "White", "prompt": "white feathers", "color": "#f2f2f2" },
         { "id": "black", "label": "Black", "prompt": "black feathers", "color": "#1f1f23" },
@@ -261,7 +219,8 @@
       "order": 62,
       "section": "Species Features",
       "tier": "P1",
-      "visible_when": { "group": "race", "class": "construct" },
+      "visible_when": { "group": "skin_type", "in": ["metal_chassis"] },
+      "_note": "5.7: re-keyed to skin_type - a synthetic-skin android shows no chassis finish. chassis_seams/faceplate stay race-keyed (structure, not surface).",
       "options": [
         { "id": "matte_white", "label": "Matte White", "prompt": "matte white chassis" },
         { "id": "gloss_white", "label": "Gloss White", "prompt": "glossy white chassis" },
@@ -315,7 +274,8 @@
       "order": 65,
       "section": "Species Features",
       "tier": "P1",
-      "visible_when": { "group": "race", "class": "ethereal" },
+      "visible_when": { "group": "skin_type", "in": ["ethereal_form"] },
+      "_note": "5.7: re-keyed to skin_type. glow_color deliberately stays race-keyed (class ethereal) - emission is not a surface, and elemental-kin keep their glow on any surface.",
       "options": [
         { "id": "solid", "label": "Solid", "prompt": "" },
         { "id": "faint_shimmer", "label": "Faint Shimmer", "prompt": "faint shimmer" },

@@ -154,9 +154,9 @@ def _character_with_matte(creator):
     created = creator.create_character({
         "mode": "quick", "name": "Ada", "age": 30,
         "selections": {"race": "human", "gender_presentation": "feminine",
-                       "skin_tone": "fair", "hair_color": "black",
-                       "hair_style": "bob", "eye_color": "brown",
-                       "body_type": "average"}})
+                       "skin_type": "bare_skin", "skin_tone": "fair",
+                       "hair_color": "black", "hair_style": "bob",
+                       "eye_color": "brown", "body_type": "average"}})
     cid = created["id"]
     store = creator.store
     mdir = store.matted_dir(cid)

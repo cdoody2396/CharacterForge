@@ -85,9 +85,10 @@ def test_groups_sorted_by_order():
 
 def test_bundled_required_set_is_the_render_identity_minimum():
     catalog = load_option_catalog(strict=True)
+    # the protected 7 + the 5.7 skin_type surface (sign-off 2026-07-18)
     assert set(catalog.required_group_ids()) == {
-        "race", "gender_presentation", "skin_tone", "hair_color",
-        "hair_style", "eye_color", "body_type"}
+        "race", "gender_presentation", "skin_type", "skin_tone",
+        "hair_color", "hair_style", "eye_color", "body_type"}
     # every required group is quick (the load-time invariant)
     for gid in catalog.required_group_ids():
         assert catalog.get(gid).quick is True
@@ -677,8 +678,8 @@ def test_bundled_catalog_is_the_v2_tiered_conditional_shape():
     assert tiers["age"] is None                 # numeric stays untiered
     assert tiers["traits"] is None              # Subset C is 5.6d
     assert catalog.get("fur_color").visible_when == {
-        "group": "race", "class": "beastfolk-mammal"}
-    assert catalog.get("race").visible_when is None   # required: unconditional
+        "group": "skin_type", "in": ["fur_over_skin", "full_fur"]}  # 5.7
+    assert catalog.get("race").visible_when is None   # the root referent
     assert catalog.get("race").get_option("catfolk").classes == (
         "beastfolk", "beastfolk-mammal")
     assert catalog.get("race").get_option("human").classes == ()

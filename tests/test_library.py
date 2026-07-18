@@ -35,7 +35,8 @@ def audit_events(audit):
 
 
 # The render-identity minimum every character now needs (5.5c).
-SEL = {"race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
+SEL = {"race": "human", "gender_presentation": "feminine",
+       "skin_type": "bare_skin", "skin_tone": "fair",
        "hair_color": "black", "hair_style": "bob", "eye_color": "brown",
        "body_type": "average"}
 

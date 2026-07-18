@@ -723,9 +723,9 @@ def test_build_services_wires_library_over_the_shared_store(tmp_path,
     created = creator.create_character(
         {"mode": "quick", "name": "Wired", "age": 22,
          "selections": {"race": "human", "gender_presentation": "feminine",
-                        "skin_tone": "fair", "hair_color": "black",
-                        "hair_style": "bob", "eye_color": "brown",
-                        "body_type": "average"}})
+                        "skin_type": "bare_skin", "skin_tone": "fair",
+                        "hair_color": "black", "hair_style": "bob",
+                        "eye_color": "brown", "body_type": "average"}})
     assert created["ok"] is True
     listed = library.list_characters()
     assert any(r["id"] == created["id"] for r in listed["characters"])

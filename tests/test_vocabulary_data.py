@@ -76,10 +76,13 @@ def test_every_tier_is_valid_and_render_b_groups_are_tiered(gated_catalog):
 
 
 def test_required_7_byte_identity_and_outfit_pin(gated_catalog):
-    # flag 2: the required/quick ids are frozen byte-identical
-    assert tuple(gated_catalog.required_group_ids()) == (
-        "race", "gender_presentation", "skin_tone", "hair_color",
-        "hair_style", "eye_color", "body_type")
+    # flag 2: the 7 protected required/quick ids stay byte-identical; 5.7
+    # adds skin_type (the unified surface, user sign-off 2026-07-18) — an
+    # ADDITION, the protected 7 untouched. Set-compare: the hair reorder
+    # (length -> style -> color) changed sort position, not membership.
+    assert set(gated_catalog.required_group_ids()) == {
+        "race", "gender_presentation", "skin_type", "skin_tone",
+        "hair_color", "hair_style", "eye_color", "body_type"}
     # app/imagegen/catalog.py pins OUTFIT_GROUP="outfit" reading record.tags:
     # the group keeps its id and a multi-style kind (V2 B56 "existing id")
     outfit = gated_catalog.get("outfit")
@@ -132,26 +135,41 @@ def test_visible_when_references_resolve(gated_catalog):
 
 
 def test_every_race_class_drives_some_condition(gated_catalog):
-    # the inverse direction: classes on race options exist to fire conditions
-    # (plus the beastfolk family class carried per the 5.6a test precedent)
+    # 5.7: the surface color groups re-keyed from race class to skin_type, so
+    # several classes no longer fire a visible_when — they remain load-bearing
+    # for the library species filter and picker grouping (class metadata is
+    # the taxonomy, not only a condition key). The classes still driving
+    # conditions are exactly:
     conditions = {g.visible_when["class"] for g in gated_catalog.groups()
                   if g.visible_when and "class" in g.visible_when}
+    assert conditions == {"construct", "ethereal", "monstrous",
+                          "elemental-cosmic", "undead"}
+    # every condition-referenced class is carried by some race option
     race = gated_catalog.get("race")
     carried = {c for opt in race.options for c in opt.classes}
-    assert carried - conditions == {"beastfolk"}
+    assert conditions <= carried
 
 
-def test_conditional_referents_are_always_visible(gated_catalog):
-    # authoring note 2: a condition must reference the required set or an
-    # unconditioned group — a conditionally-visible referent has orphan
-    # semantics
+def test_conditional_referents_are_at_most_one_hop_deep(gated_catalog):
+    # authoring note 2, amended at 5.7: a condition references an
+    # unconditioned group, OR a group whose own condition references an
+    # unconditioned group (chain depth <= 1 hop — the one-pass client and
+    # the one-hop-deeper server drop both converge on such chains; deeper
+    # chains would not). The only shipped chain is
+    # hair_color_pattern -> hair_color_2 -> hair_length.
+    chained = []
     for group in gated_catalog.groups():
         cond = group.visible_when
         if cond is None:
             continue
         ref = gated_catalog.get(cond["group"])
-        assert ref.visible_when is None, (
-            f"{group.id} references conditionally-visible {ref.id}")
+        if ref.visible_when is None:
+            continue
+        chained.append(group.id)
+        ref2 = gated_catalog.get(ref.visible_when["group"])
+        assert ref2.visible_when is None, (
+            f"{group.id} -> {ref.id} -> {ref2.id} chains deeper than one hop")
+    assert chained == ["hair_color_pattern"], chained
 
 
 # -- flag 8: every shipped fragment passes Layer 1 at assembly ----------------
@@ -241,30 +259,39 @@ def test_fragment_boundaries_survive_the_adjacency_gate(gated_catalog):
 
 
 # one representative per V2 §3 A6 family (+ harpy: feathered & monstrous),
-# each with its class-visible species blocks set — the records a user could
-# actually construct through the conditional form
+# each with its skin_type surface + visible species blocks set — the records
+# a user could actually construct through the conditional form (5.7: surface
+# groups key off skin_type; the *_coverage groups are retired)
 _FAMILY_RECORDS = {
     "human": {"apparent_age": "40s"},
     "elf": {"apparent_age": "ageless_adult", "ears": "pointed_long"},
     "oni": {"horns": "single_oni_horn", "skin_tone": "crimson"},
-    "catfolk": {"ears": "feline", "tail": "feline", "fur_coverage": "partial",
+    "catfolk": {"ears": "feline", "tail": "feline",
+                "skin_type": "fur_over_skin",
                 "fur_color": "tawny", "fur_pattern": "striped"},
-    "lamia": {"lower_body": "serpent_coil", "scale_coverage": "partial",
+    "lamia": {"lower_body": "serpent_coil", "skin_type": "scales_over_skin",
               "scale_color": "emerald", "scale_sheen": "iridescent"},
-    "harpy": {"lower_body": "bird_legs", "feather_coverage": "partial",
+    "harpy": {"lower_body": "bird_legs", "skin_type": "feathers_over_skin",
               "feather_color": "white", "wings": "large_feathered"},
-    "dragon_anthro": {"scale_coverage": "full", "scale_color": "obsidian",
+    "dragon_anthro": {"skin_type": "full_scales", "scale_color": "obsidian",
                       "scale_sheen": "glossy", "horns": "curved_back",
                       "tail": "spiked_dragon", "wings": "dragon"},
     "succubus_incubus": {"horns": "demon_crown", "tail": "spade_demon",
                          "wings": "bat"},
-    "ghost": {"undead_state": "spectral", "ethereal_opacity": "translucent",
-              "glow_color": "ice_blue"},
-    "android": {"chassis_finish": "chrome", "chassis_seams": "visible_joints",
+    "ghost": {"undead_state": "spectral", "skin_type": "ethereal_form",
+              "ethereal_opacity": "translucent", "glow_color": "ice_blue"},
+    "android": {"skin_type": "metal_chassis", "chassis_finish": "chrome",
+                "chassis_seams": "visible_joints",
                 "faceplate": "synth_skin_seams", "ears": "mechanical"},
-    "flamekin": {"ethereal_opacity": "faint_shimmer", "glow_color":
+    "flamekin": {"skin_type": "ethereal_form",
+                 "ethereal_opacity": "faint_shimmer", "glow_color":
                  "ember_orange", "elemental_marks": None},  # multi below
 }
+
+# surfaces that hide skin_tone (required-when-visible): the maximal record
+# drops its tone for these, exactly as the form would
+_TONELESS_SURFACES = {"full_fur", "full_plumage", "full_scales", "stone",
+                      "metal_chassis", "ethereal_form"}
 
 _GATED_SPREAD = [  # exercised across the family records, all four configs
     {"outfit": "lingerie", "genitalia": "vulva", "chest_shape": "teardrop",
@@ -281,6 +308,7 @@ _GATED_SPREAD = [  # exercised across the family records, all four configs
 def _maximal_record(catalog, race, extra, gated):
     selections = {
         "race": race, "gender_presentation": "feminine",
+        "skin_type": "bare_skin",
         "skin_tone": "gold_metallic", "hair_color": "strawberry_blonde",
         "hair_style": "crown_braid", "eye_color": "pupil_less_white",
         "body_type": "voluptuous", "apparent_age": "30s",
@@ -299,6 +327,8 @@ def _maximal_record(catalog, race, extra, gated):
     }
     selections.update({k: v for k, v in extra.items() if v is not None})
     selections.update({k: v for k, v in gated.items() if k != "outfit"})
+    if selections["skin_type"] in _TONELESS_SURFACES:
+        selections.pop("skin_tone", None)  # hidden -> the form never sends it
     tags = {
         "eye_features": [o.id for o in catalog.get("eye_features").options],
         "other_features": [o.id for o in
@@ -340,7 +370,8 @@ def test_every_outfit_assembles_individually(gated_catalog, assembler):
     # assembly so the adjacency gate sees it next to live neighbors
     base = {
         "race": "human", "gender_presentation": "feminine",
-        "skin_tone": "fair", "hair_color": "black", "hair_style": "bob",
+        "skin_type": "bare_skin", "skin_tone": "fair",
+        "hair_color": "black", "hair_style": "bob",
         "eye_color": "brown", "body_type": "average",
     }
     for opt in gated_catalog.get("outfit").options:
@@ -410,7 +441,7 @@ def test_describe_ships_v2_conditions_and_classes(tmp_path, audit):
     described = creator.describe()
     by_id = {g["id"]: g for g in described["groups"]}
     assert by_id["fur_color"]["visible_when"] == {
-        "group": "race", "class": "beastfolk-mammal"}
+        "group": "skin_type", "in": ["fur_over_skin", "full_fur"]}
     assert by_id["genitalia_size"]["visible_when"] == {
         "group": "genitalia", "in": ["penis", "both"]}
     race_opts = {o["id"]: o for o in by_id["race"]["options"]}
@@ -458,8 +489,9 @@ _CD_GROUPS = {
     "avoided_topics": 14,
 }
 
-_REQ7 = {
-    "race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
+_REQ7 = {  # the protected 7 + the 5.7 skin_type surface
+    "race": "human", "gender_presentation": "feminine",
+    "skin_type": "bare_skin", "skin_tone": "fair",
     "hair_color": "black", "hair_style": "bob", "eye_color": "brown",
     "body_type": "average",
 }

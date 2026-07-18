@@ -277,14 +277,22 @@ _HEAVY_BASE = {
     "wings": "large_feathered",
 }
 
-_HEAVY_SPECIES = {
-    "lamia": {"lower_body": "serpent_coil", "scale_color": "obsidian"},
-    "harpy": {"lower_body": "bird_legs", "feather_color": "golden"},
-    "ghost": {"undead_state": "partially_skeletal",
+_HEAVY_SPECIES = {  # 5.7: each carries its skin_type surface (the form would)
+    "lamia": {"skin_type": "scales_over_skin", "lower_body": "serpent_coil",
+              "scale_color": "obsidian"},
+    "harpy": {"skin_type": "feathers_over_skin", "lower_body": "bird_legs",
+              "feather_color": "golden"},
+    "ghost": {"skin_type": "ethereal_form",
+              "undead_state": "partially_skeletal",
               "ethereal_opacity": "mostly_transparent"},
-    "android": {"chassis_finish": "brass_clockwork",
+    "android": {"skin_type": "metal_chassis",
+                "chassis_finish": "brass_clockwork",
                 "faceplate": "synth_skin_seams"},
 }
+
+# surfaces that hide skin_tone — the form drops the tone for these
+_TONELESS_SURFACES = {"full_fur", "full_plumage", "full_scales", "stone",
+                      "metal_chassis", "ethereal_form"}
 
 _HEAVY_P2_P3 = {
     "hybrid_race": "starborn_celestial", "archetype": "courtesan",
@@ -319,6 +327,8 @@ def test_real_catalog_p0_p1_fit_the_first_window(race, settings, assembler):
 
     selections = {"race": race, **_HEAVY_BASE, **_HEAVY_SPECIES[race],
                   **_HEAVY_P2_P3}
+    if selections["skin_type"] in _TONELESS_SURFACES:
+        selections.pop("skin_tone", None)
     tags = {gid: [o.id for o in catalog.get(gid).options]
             for gid in ("eye_features", "other_features", "marks",
                         "tattoo_placement", "piercings", "accessories",

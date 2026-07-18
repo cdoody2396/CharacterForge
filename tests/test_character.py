@@ -23,9 +23,10 @@ def make_record(**overrides):
         name="Seraphina Vale",
         age=27,
         selections={"race": "elf", "gender_presentation": "feminine",
-                    "skin_tone": "fair", "hair_color": "silver",
-                    "hair_style": "wavy", "eye_color": "violet",
-                    "body_type": "athletic", "chest_size": "medium"},
+                    "skin_type": "bare_skin", "skin_tone": "fair",
+                    "hair_color": "silver", "hair_style": "wavy",
+                    "eye_color": "violet", "body_type": "athletic",
+                    "chest_size": "medium"},
         tags={"traits": ["confident", "witty"], "outfit": ["gown"]},
         free_text={
             "backstory": "A ranger from the northern reach who lost her clan to war.",

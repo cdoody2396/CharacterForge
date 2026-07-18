@@ -29,7 +29,8 @@ def write_options(directory, name, payload) -> None:
 # override MERGES on top (so it can add/replace a group without dropping the
 # required set — pass an explicit "" to clear one and exercise the gate).
 REQUIRED_SELECTIONS = {
-    "race": "human", "gender_presentation": "feminine", "skin_tone": "fair",
+    "race": "human", "gender_presentation": "feminine",
+    "skin_type": "bare_skin", "skin_tone": "fair",
     "hair_color": "black", "hair_style": "bob", "eye_color": "brown",
     "body_type": "average",
 }
@@ -65,8 +66,8 @@ def test_bundled_catalog_declares_sections_and_quick():
     assert race.quick is True
     assert catalog.get("archetype").quick is False
     quick_ids = {g.id for g in catalog.groups() if g.quick}
-    assert {"race", "gender_presentation", "body_type", "skin_tone",
-            "hair_color", "hair_style", "eye_color"} == quick_ids
+    assert {"race", "gender_presentation", "body_type", "skin_type",
+            "skin_tone", "hair_color", "hair_style", "eye_color"} == quick_ids
 
 
 def test_bundled_colors_parse():
@@ -278,8 +279,8 @@ def test_describe_shape(creator):
     assert described["errors"] == []
     # 5.5c: required set + derived widgets + slider band data ride the payload
     assert set(described["required_groups"]) == {
-        "race", "gender_presentation", "skin_tone", "hair_color",
-        "hair_style", "eye_color", "body_type"}
+        "race", "gender_presentation", "skin_type", "skin_tone",
+        "hair_color", "hair_style", "eye_color", "body_type"}
     assert by_id["race"]["required"] is True
     assert by_id["race"]["widget"] == "picker"      # 112 colorless options
     assert by_id["skin_tone"]["widget"] == "swatch"  # carries colors
@@ -434,7 +435,8 @@ def test_detailed_create_full_round_trips(creator):
         "age": 132,
         "selections": {
             "race": "tiefling", "gender_presentation": "feminine",
-            "skin_tone": "olive", "hair_color": "red", "hair_style": "wavy",
+            "skin_type": "bare_skin", "skin_tone": "olive",
+            "hair_color": "red", "hair_style": "wavy",
             "eye_color": "gold", "body_type": "curvy", "chest_size": "large",
             "hips": "wide", "apparent_age": "30s", "height_band": "tall",
             "archetype": "mage", "horns": "curved_back", "tail": "spade_demon",
@@ -1289,3 +1291,36 @@ def test_preview_path_stays_ungated_by_required(tmp_path, audit):
         "selections": {"skin_type": "metal_chassis", "skin_tone": "fair"}})
     assert isinstance(record, CharacterRecord)
     assert "skin_tone" not in record.selections
+
+
+def test_bundled_android_creates_without_skin_tone(creator):
+    # End-to-end against the real bundled data: a metal-chassis android needs
+    # no skin tone (5.7 surface model); the record saves and lints clean.
+    res = creator.create_character({
+        "mode": "quick", "name": "Unit-7", "age": 30,
+        "selections": {"race": "android", "gender_presentation": "androgynous",
+                       "skin_type": "metal_chassis",
+                       "chassis_finish": "chrome",
+                       "hair_color": "silver", "hair_style": "bob",
+                       "eye_color": "blue", "body_type": "average"}})
+    assert res["ok"] is True, res
+    record = creator.store.load(res["id"])
+    assert "skin_tone" not in record.selections
+    assert record.validate_against(creator.catalog) == []
+
+
+def test_bundled_bald_character_needs_no_style_or_color(creator):
+    # Real data: hair_length=bald lifts the hair_style/hair_color requirement
+    # (they are hidden), and a sent color never reaches the record.
+    res = creator.create_character({
+        "mode": "detailed", "name": "Bald Monk", "age": 41,
+        "selections": {"race": "human", "gender_presentation": "masculine",
+                       "skin_type": "bare_skin", "skin_tone": "tan",
+                       "hair_length": "bald", "hair_color": "black",
+                       "eye_color": "brown", "body_type": "muscular"}})
+    assert res["ok"] is True, res
+    record = creator.store.load(res["id"])
+    assert record.selections["hair_length"] == "bald"
+    assert "hair_color" not in record.selections
+    assert "hair_style" not in record.selections
+    assert record.validate_against(creator.catalog) == []
