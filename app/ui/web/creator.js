@@ -71,6 +71,67 @@ window.Creator = (function () {
     return catalog.groups.find((g) => g.field === "age") || null;
   }
 
+  function apparentAgeGroup() {
+    return catalog.groups.find((g) => g.field === "apparent_age") || null;
+  }
+
+  // ---- 5.7 create-time defaults (auto-fill, manual pick always wins) ----
+  // Both defaults run on CREATE only: an edit auto-filling either would
+  // silently change the assembled prompt -> render_changed -> stale marks
+  // on an unrelated fix. A manual pick on the group stops future auto-fill.
+
+  const manualPick = new Set(); // group ids the user set by hand this session
+
+  // entered age -> apparent band. >100 reads ageless (the elf/vampire case),
+  // never "elderly" for a 400-year-old.
+  const AGE_BANDS = [
+    [27, "early_20s"], [32, "mid_late_20s"], [42, "30s"], [52, "40s"],
+    [62, "50s"], [75, "60s"], [100, "elderly"], [Infinity, "ageless_adult"],
+  ];
+
+  function maybeDefaultApparentAge() {
+    if (editing || manualPick.has("apparent_age")) return;
+    const g = apparentAgeGroup();
+    const n = Number(state.age);
+    if (!g || !Number.isFinite(n) || n < 20) return;
+    const band = AGE_BANDS.find(([max]) => n <= max)?.[1];
+    if (!band || !(g.options || []).some((o) => o.id === band)) return;
+    if (state.selections.apparent_age === band) return;
+    state.selections.apparent_age = band;
+    // repaint the header control in place (a full render would tear the age
+    // input out from under the keyboard mid-typing)
+    const wrap = document.querySelector(
+      '#creator-form .field[data-field="selections.apparent_age"]');
+    if (wrap)
+      for (const btn of wrap.querySelectorAll(".opt"))
+        btn.classList.toggle("on", btn.dataset.oid === band);
+  }
+
+  // race class -> suggested surface. Priority resolves multi-class races
+  // (ghost undead+ethereal -> ethereal form); a plain-humanoid race suggests
+  // bare skin. Always overridable — it is a default, not a rule.
+  const SURFACE_BY_CLASS = [
+    ["ethereal", "ethereal_form"], ["construct", "metal_chassis"],
+    ["scaled", "scales_over_skin"], ["feathered", "feathers_over_skin"],
+    ["beastfolk", "fur_over_skin"], ["elemental-cosmic", "stone"],
+  ];
+
+  function maybeDefaultSurface() {
+    if (editing || manualPick.has("skin_type")) return;
+    const race = condIndex().groups.get("race");
+    const st = condIndex().groups.get("skin_type");
+    const chosen = state.selections.race;
+    if (!race || !st || !chosen) return;
+    const opt = (race.options || []).find((o) => o.id === chosen);
+    const classes = (opt && Array.isArray(opt["class"])) ? opt["class"] : [];
+    let surface = "bare_skin";
+    for (const [cls, sfc] of SURFACE_BY_CLASS)
+      if (classes.includes(cls)) { surface = sfc; break; }
+    if ((st.options || []).some((o) => o.id === surface))
+      state.selections.skin_type = surface;
+    // race is a condition referent, so the caller's render() repaints
+  }
+
   // ---- 5.6a data-driven conditionality (visible_when) -------------------
   // The backend ships each group's load-normalized condition (or null); it is
   // evaluated HERE against live selections — describe() has no record context.
@@ -133,6 +194,7 @@ window.Creator = (function () {
   // visible groups only, so hidden values never round-trip. Every change
   // refreshes the tab badges (5.7) — a cheap in-place DOM update.
   function selectionChanged(groupId) {
+    if (groupId === "race") maybeDefaultSurface(); // 5.7 create-time default
     if (condIndex().refs.has(groupId)) { render(); return; }
     refreshTabBadges();
   }
@@ -178,9 +240,11 @@ window.Creator = (function () {
   }
 
   // Groups the current mode renders as controls; the age group feeds the
-  // header input instead. visible_when filters after the mode filter.
+  // header input and apparent_age is header-hosted next to it (5.7).
+  // visible_when filters after the mode filter.
   function formGroups() {
-    const groups = catalog.groups.filter((g) => g.field !== "age");
+    const groups = catalog.groups.filter(
+      (g) => g.field !== "age" && g.field !== "apparent_age");
     const modal = mode === "quick" ? groups.filter((g) => g.quick) : groups;
     return modal.filter(visibleNow);
   }
@@ -230,6 +294,7 @@ window.Creator = (function () {
   function optionButton(option, isOn, variant) {
     const btn = el("button", "opt", option.label);
     btn.type = "button";
+    btn.dataset.oid = option.id; // in-place repaints key off this (5.7)
     if (variant === "swatch" && (option.color || option.image)) {
       btn.classList.add("swatch");
       const tile = el("span", "swatch-tile");
@@ -260,6 +325,7 @@ window.Creator = (function () {
         const wasOn = state.selections[group.id] === o.id;
         if (wasOn) delete state.selections[group.id];
         else state.selections[group.id] = o.id;
+        manualPick.add(group.id); // a hand pick stops auto-defaults (5.7)
         for (const sib of row.children)
           sib.classList.toggle("on", sib === btn && !wasOn);
         clearFieldError(wrap);
@@ -366,6 +432,7 @@ window.Creator = (function () {
         if (state.selections[group.id] === id) delete state.selections[group.id];
         else state.selections[group.id] = id;
       }
+      manualPick.add(group.id); // a hand pick stops auto-defaults (5.7)
       clearFieldError(wrap);
       paint();
       selectionChanged(group.id);
@@ -593,12 +660,19 @@ window.Creator = (function () {
     ageInput.step = 1;
     if (state.age === null) state.age = age?.default ?? min;
     ageInput.value = state.age;
-    ageInput.addEventListener("input", () => { state.age = ageInput.value; });
+    ageInput.addEventListener("input", () => {
+      state.age = ageInput.value;
+      maybeDefaultApparentAge(); // 5.7 create-time default, in-place repaint
+    });
     ageWrap.appendChild(ageInput);
 
     grid.appendChild(nameWrap);
     grid.appendChild(ageWrap);
     card.appendChild(grid);
+    // apparent_age lives next to Age (5.7): the band that actually renders,
+    // beside the number that gates. Full control() — hint popover included.
+    const apparent = apparentAgeGroup();
+    if (apparent) card.appendChild(control(apparent));
     return card;
   }
 
@@ -879,6 +953,7 @@ window.Creator = (function () {
     state.sliders = Object.assign({}, res.sliders || {});
     state.free_text = Object.assign({}, res.free_text || {});
     clearPickerSearch(); // a fresh record starts with unfiltered pickers
+    manualPick.clear();  // defaults re-arm for the next create (5.7)
   }
 
   function showRecordIssues(issues) {
@@ -938,6 +1013,7 @@ window.Creator = (function () {
     state.sliders = {};
     state.free_text = {};
     clearPickerSearch();
+    manualPick.clear(); // defaults re-arm for the next create (5.7)
     $("creator-alerts").textContent = "";
     $("create-feedback").className = "feedback";
     $("create-feedback").textContent = "";
@@ -1080,6 +1156,9 @@ window.Creator = (function () {
   // record even if detailed fields were touched earlier in the session.
   function buildPayload() {
     const visible = new Set(formGroups().map((g) => g.id));
+    // header-hosted (5.7): excluded from formGroups, but its selection must
+    // ride the payload or the header pick would be silently dropped
+    if (apparentAgeGroup()) visible.add("apparent_age");
     const selections = {};
     const tags = {};
     const sliders = {};
@@ -1263,6 +1342,7 @@ window.Creator = (function () {
     state.sliders = {};
     state.free_text = {};
     clearPickerSearch();
+    manualPick.clear(); // defaults re-arm (5.7)
     $("create-feedback").className = "feedback";
     $("create-feedback").textContent = "";
     if (catalog) render();

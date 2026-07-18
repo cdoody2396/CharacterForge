@@ -315,8 +315,9 @@
       "field": "apparent_age",
       "order": 15,
       "section": "Identity",
+      "quick": true,
       "tier": "P1",
-      "_note": "V2 A4: every band is adult; exists for the elf/vampire/android case where looks differ from years. O* default deferred (user decision 2026-07-16) - plain optional.",
+      "_note": "V2 A4: every band is adult; exists for the elf/vampire/android case where looks differ from years. 5.7 (user sign-off 2026-07-18, reopening 2026-07-16): quick, header-hosted next to Age, auto-defaulted from the entered age on CREATE only - a manual pick always wins, edits never auto-fill.",
       "options": [
         { "id": "early_20s", "label": "Early 20s", "prompt": "young adult" },
         { "id": "mid_late_20s", "label": "Mid-to-late 20s", "prompt": "adult" },
