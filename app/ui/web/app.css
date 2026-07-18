@@ -224,9 +224,30 @@ input[type="number"]:out-of-range { border-color: var(--blocked); }
   font-size: 13px;
   cursor: pointer;
 }
+/* 5.7 selected-state strengthening: an ON option is unmistakable on every
+   widget kind — stronger fill + a badged checkmark (the profile grid-cell
+   pattern; the accent-filled badge survives light swatch colors). */
 .opt.on {
   border-color: var(--accent);
-  background: rgba(139, 124, 246, .18);
+  background: rgba(139, 124, 246, .30);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  font-weight: 600;
+}
+.chips .opt.on::after,
+.picker-tile.on::after {
+  content: "✓";
+  flex: none;
+  display: inline-block;
+  margin-left: 7px;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
 }
 .dot {
   width: 12px;
@@ -488,9 +509,12 @@ button.ghost {
    pixel-identical to an unselected one — gender presentation and every
    anatomy single-select showed no indication when clicked. */
 .seg-row .opt.on {
-  background: rgba(139, 124, 246, .22);
-  box-shadow: inset 0 0 0 1px var(--accent);
-  color: var(--text);
+  /* solid accent fill — the connected geometry can't take a checkmark
+     without a width jump, so the fill does all the work (5.7) */
+  background: var(--accent);
+  box-shadow: none;
+  color: #fff;
+  font-weight: 600;
 }
 
 /* swatch tiles (colour / thumbnail options) */
@@ -568,7 +592,12 @@ button.ghost {
   cursor: pointer;
   text-align: left;
 }
-.picker-tile.on { border-color: var(--accent); background: rgba(139, 124, 246, .18); }
+.picker-tile.on {
+  border-color: var(--accent);
+  background: rgba(139, 124, 246, .30);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  font-weight: 600;
+}
 .picker-tile img {
   width: 34px; height: 34px; border-radius: 6px; object-fit: cover; flex: none;
 }
