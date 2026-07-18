@@ -112,6 +112,11 @@ window.Creator = (function () {
     if (cond.any === true) return chosen.length > 0;
     if (Array.isArray(cond.in))
       return chosen.some((id) => cond.in.includes(id));
+    // 5.7 negative predicate: visible unless a chosen id matches — an EMPTY
+    // selection reads VISIBLE (quick mode may not show the referenced group;
+    // required-when-visible depends on this polarity).
+    if (Array.isArray(cond.not_in))
+      return !chosen.some((id) => cond.not_in.includes(id));
     if (typeof cond.class === "string")
       return chosen.some((id) => {
         const o = (ref.options || []).find((opt) => opt.id === id);
@@ -969,9 +974,14 @@ window.Creator = (function () {
 
   // Client-side render-identity-minimum check: the backend gate is the truth,
   // but a missing required group shouldn't need a round trip to surface.
+  // 5.7 required-when-visible: a condition-hidden required group (skin_tone
+  // on a metal-chassis surface, hair_style on bald) is not required.
   function firstMissingRequired(payload) {
-    for (const gid of requiredIds())
+    for (const gid of requiredIds()) {
+      const group = condIndex().groups.get(gid);
+      if (group && !visibleNow(group)) continue;
       if (!payload.selections[gid]) return gid;
+    }
     return null;
   }
 
