@@ -130,9 +130,51 @@ window.Creator = (function () {
   // referenced by some condition — zero re-renders on a condition-free
   // catalog, so pre-5.6 interaction behavior is untouched. Hidden groups'
   // state is kept (re-revealing restores it); buildPayload() already sends
-  // visible groups only, so hidden values never round-trip.
+  // visible groups only, so hidden values never round-trip. Every change
+  // refreshes the tab badges (5.7) — a cheap in-place DOM update.
   function selectionChanged(groupId) {
-    if (condIndex().refs.has(groupId)) render();
+    if (condIndex().refs.has(groupId)) { render(); return; }
+    refreshTabBadges();
+  }
+
+  // ------------------------------------------------------------ tabs (5.7)
+
+  let activeTab = null; // section title; survives re-renders + mode flips
+
+  // Unmet, currently-visible required groups bucketed by owning section —
+  // the per-tab badge source. Anatomy-regioned groups bucket under Anatomy.
+  function missingBySection() {
+    const counts = new Map();
+    if (!catalog) return counts;
+    const req = requiredIds();
+    for (const g of catalog.groups) {
+      if (!req.has(g.id) || !visibleNow(g) || state.selections[g.id]) continue;
+      const title = g.region ? "Anatomy" : (g.section || "Options");
+      counts.set(title, (counts.get(title) || 0) + 1);
+    }
+    return counts;
+  }
+
+  function refreshTabBadges() {
+    const strip = document.querySelector("#creator-form .tab-strip");
+    if (!strip) return;
+    const missing = missingBySection();
+    for (const tab of strip.children) {
+      const n = missing.get(tab.dataset.title) || 0;
+      let badge = tab.querySelector(".tab-badge");
+      if (n && badge) badge.textContent = String(n);
+      else if (n) tab.appendChild(el("span", "tab-badge", String(n)));
+      else if (badge) badge.remove();
+    }
+  }
+
+  function activateTab(title) {
+    activeTab = title;
+    const root = $("creator-form");
+    for (const p of root.querySelectorAll(".tab-panel"))
+      p.hidden = p.dataset.section !== title;
+    for (const b of root.querySelectorAll(".tab-strip .tab"))
+      b.classList.toggle("active", b.dataset.title === title);
   }
 
   // Groups the current mode renders as controls; the age group feeds the
@@ -506,8 +548,8 @@ window.Creator = (function () {
 
   function render() {
     const root = $("creator-form");
-    // keep progressive-disclosure state: remember which sections/regions are
-    // open so a mode switch / reload doesn't collapse the user's place
+    // remember which anatomy regions are open so a re-render (visible_when,
+    // mode switch, reload) doesn't collapse the user's place
     const openKeys = new Set(
       [...root.querySelectorAll("details[open] > summary")]
         .map((s) => s.dataset.key || s.textContent));
@@ -519,20 +561,13 @@ window.Creator = (function () {
     const plain = groups.filter((g) => !g.region);
     const anatomy = groups.filter((g) => g.region);
 
-    // ordered collapsible section cards; a group's `section` places it, anatomy
-    // groups collapse under one section by body region (§12 disclosure)
-    const sections = new Map(); // title -> {order, fields, card}
+    // section buckets; a group's `section` places it, anatomy groups collapse
+    // under one section by body region (§12 disclosure)
+    const sections = new Map(); // title -> {order, fields}
     function sectionFields(title, order) {
       let s = sections.get(title);
       if (!s) {
-        const card = el("details", "card section");
-        card.open = openKeys.size === 0 || openKeys.has("sec:" + title);
-        const summary = el("summary", "section-summary", title);
-        summary.dataset.key = "sec:" + title;
-        card.appendChild(summary);
-        const fields = el("div", "fields");
-        card.appendChild(fields);
-        s = { order, fields, card };
+        s = { order, fields: el("div", "fields") };
         sections.set(title, s);
       } else if (order < s.order) {
         s.order = order;
@@ -572,9 +607,46 @@ window.Creator = (function () {
         sectionFields(f.section || "Notes", 9000).appendChild(freeTextControl(f));
     }
 
-    [...sections.values()]
-      .sort((a, b) => a.order - b.order)
-      .forEach((s) => root.appendChild(s.card));
+    const ordered = [...sections.entries()]
+      .sort((a, b) => a[1].order - b[1].order);
+
+    if (mode === "quick") {
+      // quick create stays one short page: a handful of groups, plain cards
+      for (const [title, s] of ordered) {
+        const card = el("section", "card section");
+        card.appendChild(el("h2", "section-title", title));
+        card.appendChild(s.fields);
+        root.appendChild(card);
+      }
+      return;
+    }
+
+    // detailed mode (5.7): one tab per section, free jumping, badge = unmet
+    // visible required fields — the collapsible long page is retired
+    const titles = ordered.map(([t]) => t);
+    if (!titles.includes(activeTab)) activeTab = titles[0] || null;
+    const missing = missingBySection();
+    const strip = el("div", "tab-strip");
+    strip.setAttribute("role", "tablist");
+    for (const [title] of ordered) {
+      const tab = el("button", "tab", title);
+      tab.type = "button";
+      tab.dataset.title = title;
+      tab.setAttribute("role", "tab");
+      const n = missing.get(title) || 0;
+      if (n) tab.appendChild(el("span", "tab-badge", String(n)));
+      if (title === activeTab) tab.classList.add("active");
+      tab.addEventListener("click", () => activateTab(title));
+      strip.appendChild(tab);
+    }
+    root.appendChild(strip);
+    for (const [title, s] of ordered) {
+      const panel = el("section", "card section tab-panel");
+      panel.dataset.section = title;
+      panel.appendChild(s.fields);
+      panel.hidden = title !== activeTab;
+      root.appendChild(panel);
+    }
   }
 
   // -------------------------------------------------- live prompt panel
@@ -967,8 +1039,10 @@ window.Creator = (function () {
       `#creator-form .field[data-field="${CSS.escape(field)}"]`);
     if (!target) return;
     target.classList.add("bad");
+    const panel = target.closest(".tab-panel");
+    if (panel && panel.hidden) activateTab(panel.dataset.section); // 5.7 tabs
     const region = target.closest("details");
-    if (region) region.open = true; // surface a fault hidden in a collapsed section
+    if (region) region.open = true; // surface a fault in a collapsed region
     target.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
