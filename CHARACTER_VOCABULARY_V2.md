@@ -1,6 +1,6 @@
 # CHARACTER VOCABULARY V2 — FROM-SCRATCH OPTION DESIGN (Rev 2)
 
-**Status:** Design document. No logic, no data files, no schema edits. Vocabulary + per-field metadata only.
+**Status:** Built (Stage 5.6, 2026-07-17) — implemented into the option data files, the §15 format extensions (`visible_when`, `class`, `tier`), and the free-text swap. Retained as the design rationale + contract record; the contract flags below remain live.
 **Rev 2 changes:** all sliders removed (species-relative categorical frame); single-setting world model (dual-world/isekai structure demoted to a `roots` backstory group); relationship-instance fields removed from the record (replaced by social dispositions; the instance is scenario-builder state); modern real-world coverage expanded across occupation, wardrobe, hobbies, tastes, skills, events, workplaces, living situations.
 
 ---
