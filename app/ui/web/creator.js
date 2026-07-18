@@ -285,10 +285,27 @@ window.Creator = (function () {
   // reset / record-fill / end-of-edit so a stale search never prefills the
   // next session's pickers.
   const pickerSearchText = {}; // group id -> last search string
+  const pickerSortAZ = {};     // group id -> A–Z toggle (5.7; session-scoped)
 
   function clearPickerSearch() {
     for (const gid of Object.keys(pickerSearchText))
       delete pickerSearchText[gid];
+  }
+
+  // Class-header grouping (5.7): generic — any picker whose options mostly
+  // carry `class` metadata groups under humanized class headers (race and
+  // hybrid_race today, any future classed catalog for free). Class-less
+  // options bucket as Humanoid, first (data order puts human at the top).
+  function classedFraction(group) {
+    if (!group.options.length) return 0;
+    return group.options.filter((o) => Array.isArray(o["class"]) &&
+                                       o["class"].length).length /
+           group.options.length;
+  }
+
+  function humanizeClass(c) {
+    return c.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(" ");
   }
 
   function pickerControl(group, wrap) {
@@ -302,6 +319,18 @@ window.Creator = (function () {
     search.type = "search";
     search.placeholder = `Search ${group.label.toLowerCase()}… (${group.options.length})`;
     search.value = pickerSearchText[group.id] || "";
+    const az = () => !!pickerSortAZ[group.id];
+    const sortBtn = el("button", "picker-sort", az() ? "A–Z" : "Curated");
+    sortBtn.type = "button";
+    sortBtn.title = "Toggle ordering: curated data order (with class groups) or alphabetical";
+    sortBtn.addEventListener("click", () => {
+      pickerSortAZ[group.id] = !az();
+      sortBtn.textContent = az() ? "A–Z" : "Curated";
+      paint();
+    });
+    const toolbar = el("div", "picker-toolbar");
+    toolbar.appendChild(search);
+    toolbar.appendChild(sortBtn);
     const grid = el("div", "picker-grid");
     const more = el("div", "picker-more");
 
@@ -322,28 +351,48 @@ window.Creator = (function () {
       selectionChanged(group.id);
     }
 
+    function makeTile(o) {
+      const tile = el("button", "picker-tile");
+      tile.type = "button";
+      if (isOn(o.id)) tile.classList.add("on");
+      if (o.image) {
+        const img = el("img"); img.src = o.image; img.alt = "";
+        tile.appendChild(img);
+      } else if (o.color) {
+        const sw = el("span", "picker-color");
+        sw.style.backgroundColor = o.color;
+        tile.appendChild(sw);
+      }
+      tile.appendChild(el("span", "picker-label", o.label));
+      tile.addEventListener("click", () => toggle(o.id));
+      return tile;
+    }
+
     function paint() {
       const q = search.value.trim().toLowerCase();
-      const matches = group.options.filter((o) =>
+      let matches = group.options.filter((o) =>
         !q || o.label.toLowerCase().includes(q) || o.id.toLowerCase().includes(q));
+      if (az())
+        matches = [...matches].sort((a, b) => a.label.localeCompare(b.label));
       grid.textContent = "";
-      for (const o of matches.slice(0, PICKER_RENDER_CAP)) {
-        const tile = el("button", "picker-tile");
-        tile.type = "button";
-        if (isOn(o.id)) tile.classList.add("on");
-        if (o.image) {
-          const img = el("img"); img.src = o.image; img.alt = "";
-          tile.appendChild(img);
-        } else if (o.color) {
-          const sw = el("span", "picker-color");
-          sw.style.backgroundColor = o.color;
-          tile.appendChild(sw);
+      const capped = matches.slice(0, PICKER_RENDER_CAP);
+      // class-group headers in curated order only (a search or A–Z flattens)
+      if (!q && !az() && classedFraction(group) >= 0.5) {
+        const buckets = new Map(); // key -> tiles, keyed in data order
+        for (const o of capped) {
+          const key = (Array.isArray(o["class"]) && o["class"].length)
+            ? humanizeClass(o["class"][0]) : "Humanoid";
+          if (!buckets.has(key)) buckets.set(key, []);
+          buckets.get(key).push(o);
         }
-        tile.appendChild(el("span", "picker-label", o.label));
-        tile.addEventListener("click", () => toggle(o.id));
-        grid.appendChild(tile);
+        for (const [key, opts] of buckets) {
+          grid.appendChild(el("div", "picker-group-head", key));
+          for (const o of opts) grid.appendChild(makeTile(o));
+        }
+      } else {
+        for (const o of capped) grid.appendChild(makeTile(o));
       }
-      const hidden = matches.length - Math.min(matches.length, PICKER_RENDER_CAP);
+      const hidden = matches.length - capped.length;
       more.textContent = hidden > 0
         ? `${hidden} more — refine your search`
         : (matches.length ? "" : "No matches.");
@@ -353,7 +402,7 @@ window.Creator = (function () {
       pickerSearchText[group.id] = search.value;
       paint();
     });
-    box.appendChild(search);
+    box.appendChild(toolbar);
     box.appendChild(grid);
     box.appendChild(more);
     wrap.appendChild(box);
