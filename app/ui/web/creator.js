@@ -42,6 +42,7 @@ window.Creator = (function () {
     tags: {},              // group id -> [option ids]
     sliders: {},           // group id -> number
     free_text: {},         // field key -> text
+    labels: [],            // free-form library labels (5.7)
   };
 
   // ------------------------------------------------------------- helpers
@@ -627,6 +628,86 @@ window.Creator = (function () {
     return wrap;
   }
 
+  // ------------------------------------------------- free-form labels (5.7)
+
+  const LABELS_MAX = 20;
+  const LABEL_MAX_LEN = 32;
+  let labelUniverse = null; // union of labels across the library (suggestions)
+
+  async function loadLabelUniverse() {
+    if (labelUniverse !== null) return;
+    try {
+      const res = await window.pywebview.api.library_list();
+      const all = new Set();
+      for (const r of (res && res.characters) || [])
+        for (const l of r.labels || []) all.add(l);
+      labelUniverse = [...all].sort((a, b) => a.localeCompare(b));
+    } catch {
+      labelUniverse = [];
+    }
+  }
+
+  function labelsControl() {
+    const wrap = fieldWrap("labels", "Library Tags", null, false);
+    wrap.querySelector(".field-label").appendChild(infoPop(
+      "Your own free-form tags (“main cast”, “campaign 2”…) for filtering " +
+      "the library. Organizational only — never rendered, never in prompts."));
+    const row = el("div", "chips label-chips");
+    const input = el("input", "label-input");
+    input.type = "text";
+    input.maxLength = LABEL_MAX_LEN;
+    input.placeholder = "Add a tag, press Enter…";
+    const suggestions = el("div", "chips label-suggest");
+    const status = el("div", "field-status");
+    const check = makeChecker(status);
+
+    function has(text) {
+      return state.labels.some((l) => l.toLowerCase() === text.toLowerCase());
+    }
+
+    function add(text) {
+      text = (text || "").trim().slice(0, LABEL_MAX_LEN);
+      if (!text || has(text) || state.labels.length >= LABELS_MAX) return;
+      state.labels.push(text);
+      input.value = "";
+      paint();
+      input.focus();
+    }
+
+    function paint() {
+      row.textContent = "";
+      for (const label of state.labels) {
+        const chip = el("button", "opt on label-chip", label);
+        chip.type = "button";
+        chip.title = "Remove";
+        chip.addEventListener("click", () => {
+          state.labels = state.labels.filter((l) => l !== label);
+          paint();
+        });
+        row.appendChild(chip);
+      }
+      row.appendChild(input);
+      suggestions.textContent = "";
+      for (const l of (labelUniverse || []).filter((l) => !has(l)).slice(0, 12)) {
+        const btn = el("button", "opt label-suggest-chip", "+ " + l);
+        btn.type = "button";
+        btn.addEventListener("click", () => add(l));
+        suggestions.appendChild(btn);
+      }
+    }
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(input.value); }
+    });
+    input.addEventListener("input", () => check(input.value, "freetext"));
+    paint();
+    loadLabelUniverse().then(paint); // suggestions fill in when the list lands
+    wrap.appendChild(row);
+    wrap.appendChild(suggestions);
+    wrap.appendChild(status);
+    return wrap;
+  }
+
   // -------------------------------------------------------------- header
 
   function identityCard() {
@@ -750,6 +831,7 @@ window.Creator = (function () {
     if (mode === "detailed") {
       for (const f of catalog.free_text_fields)
         sectionFields(f.section || "Notes", 9000).appendChild(freeTextControl(f));
+      sectionFields("Notes", 9000).appendChild(labelsControl()); // 5.7
     }
 
     const ordered = [...sections.entries()]
@@ -952,6 +1034,7 @@ window.Creator = (function () {
       state.tags[k] = (v || []).slice();
     state.sliders = Object.assign({}, res.sliders || {});
     state.free_text = Object.assign({}, res.free_text || {});
+    state.labels = (res.labels || []).slice();
     clearPickerSearch(); // a fresh record starts with unfiltered pickers
     manualPick.clear();  // defaults re-arm for the next create (5.7)
   }
@@ -1012,6 +1095,7 @@ window.Creator = (function () {
     state.tags = {};
     state.sliders = {};
     state.free_text = {};
+    state.labels = [];
     clearPickerSearch();
     manualPick.clear(); // defaults re-arm for the next create (5.7)
     $("creator-alerts").textContent = "";
@@ -1184,6 +1268,7 @@ window.Creator = (function () {
       tags,
       sliders,
       free_text,
+      labels: mode === "detailed" ? state.labels.slice() : [], // 5.7
     };
   }
 
@@ -1341,6 +1426,7 @@ window.Creator = (function () {
     state.tags = {};
     state.sliders = {};
     state.free_text = {};
+    state.labels = [];
     clearPickerSearch();
     manualPick.clear(); // defaults re-arm (5.7)
     $("create-feedback").className = "feedback";

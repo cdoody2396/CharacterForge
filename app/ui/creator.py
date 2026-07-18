@@ -42,6 +42,7 @@ from ..model import (
     load_option_catalog,
     resolve_within,
 )
+from ..model.character import LABEL_MAX_LEN, LABELS_MAX
 from ..model.options import BUNDLED_GATED_OPTIONS_DIR, BUNDLED_OPTIONS_DIR
 
 MODES = ("quick", "detailed")
@@ -531,6 +532,7 @@ class CreatorService:
             tags=tags,
             sliders=sliders,
             free_text=self._check_free_text(payload.get("free_text") or {}),
+            labels=self._check_labels(payload.get("labels") or []),
             identity=identity,  # Stage-4 edit: the anchor survives the edit
             # 5.5c render-identity minimum: a character cannot be constructed
             # (created OR edited) without every required group. Catalog-driven,
@@ -662,6 +664,30 @@ class CreatorService:
                 # non-finite clamp result must never reach disk
                 raise _Invalid(f"sliders.{gid}", "slider bounds are not finite")
             out[gid] = int(number) if number.is_integer() else number
+        return out
+
+    def _check_labels(self, raw: object) -> list[str]:
+        """5.7 free-form labels: strict shape at the doorway (the record's
+        `_norm_labels` re-normalizes tolerantly on every load — this is the
+        report-per-field surface a form needs). Layer-1 runs in the record
+        constructor with `labels.<i>` field names."""
+        if not isinstance(raw, (list, tuple)):
+            raise _Invalid("labels", "labels must be a list")
+        if len(raw) > LABELS_MAX:
+            raise _Invalid("labels", f"too many labels (max {LABELS_MAX})")
+        out: list[str] = []
+        seen: set[str] = set()
+        for i, item in enumerate(raw):
+            if not isinstance(item, str):
+                raise _Invalid(f"labels.{i}", "a label must be text")
+            text = item.strip()
+            if len(text) > LABEL_MAX_LEN:
+                raise _Invalid(f"labels.{i}",
+                               f"label is too long (max {LABEL_MAX_LEN} characters)")
+            if not text or text.lower() in seen:
+                continue
+            seen.add(text.lower())
+            out.append(text)
         return out
 
     def _check_free_text(self, raw: object) -> dict[str, str]:

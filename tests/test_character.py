@@ -308,3 +308,36 @@ def test_touch_updates_timestamp():
     before = record.updated_at
     record.touch()
     assert record.updated_at >= before
+
+
+# -- 5.7 free-form labels ------------------------------------------------------
+
+
+def test_labels_normalize_dedupe_and_cap():
+    rec = CharacterRecord.create(
+        "Tagged", 25,
+        labels=["  Main Cast ", "main cast", "Campaign 2", "", "x" * 99])
+    # stripped, case-insensitively deduped (first casing wins), length-capped
+    assert rec.labels[:2] == ["Main Cast", "Campaign 2"]
+    assert len(rec.labels[2]) == 32
+    rec2 = CharacterRecord.create("Many", 25,
+                                  labels=[f"tag {i}" for i in range(40)])
+    assert len(rec2.labels) == 20  # count cap
+
+
+def test_labels_round_trip_and_absent_key_reads_empty():
+    rec = CharacterRecord.create("Tagged", 25, labels=["main cast"])
+    restored = CharacterRecord.from_dict(rec.to_dict())
+    assert restored.labels == ["main cast"]
+    # a pre-5.7 record has no labels key: loads as [] with no migration
+    data = rec.to_dict()
+    del data["labels"]
+    assert CharacterRecord.from_dict(data).labels == []
+
+
+def test_labels_are_layer1_gated():
+    from app.model import ContentBlocked
+
+    with pytest.raises(ContentBlocked) as exc:
+        CharacterRecord.create("Bad", 25, labels=["preteen schoolgirl"])
+    assert exc.value.field_name.startswith("labels.")

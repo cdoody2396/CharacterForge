@@ -284,6 +284,34 @@ def _rehome_legacy_free_text(free_text: dict) -> dict:
     return free_text
 
 
+# 5.7 free-form labels: hard caps so a hand-edited file can neither balloon
+# the record nor the library payloads. Creator-side validation reports the
+# overage per field; this normalization silently enforces on load.
+LABELS_MAX = 20
+LABEL_MAX_LEN = 32
+
+
+def _norm_labels(raw: object) -> list[str]:
+    """Normalize free-form labels: strings, stripped, length-capped, empties
+    dropped, case-insensitively deduped preserving first casing and order,
+    count-capped. Tolerant — a hand-edited bare string wraps, junk drops."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        text = str(item).strip()[:LABEL_MAX_LEN].strip()
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        out.append(text)
+        if len(out) >= LABELS_MAX:
+            break
+    return out
+
+
 @dataclass
 class CharacterRecord:
     name: str
@@ -294,6 +322,10 @@ class CharacterRecord:
     tags: dict[str, list[str]] = field(default_factory=dict)
     sliders: dict[str, float] = field(default_factory=dict)
     free_text: dict[str, str] = field(default_factory=dict)
+    # 5.7: free-form organizational labels ("main cast", "campaign 2"...) —
+    # user-typed, library-filterable, never prompt-bound. `tags` was taken
+    # (strictly-validated multi-select option groups).
+    labels: list[str] = field(default_factory=list)
     identity: IdentityAnchor = field(default_factory=IdentityAnchor)
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
@@ -322,6 +354,7 @@ class CharacterRecord:
         }
         self.sliders = {str(k): _norm_number(v) for k, v in self.sliders.items()}
         self.free_text = {str(k): str(v) for k, v in self.free_text.items()}
+        self.labels = _norm_labels(self.labels)
         self._run_content_gates(get_filter())
 
     # -- gates --------------------------------------------------------------
@@ -345,6 +378,10 @@ class CharacterRecord:
         for key in self.sliders:
             # values are numbers, but the keys are text and persist too
             self._gate(filt, "sliders.key", key)
+        # Labels are prose-ish organizational text — never prompt-bound, so
+        # the freetext context (proximity-aware) is the right severity.
+        for i, label in enumerate(self.labels):
+            self._gate(filt, f"labels.{i}", label)
 
     @staticmethod
     def _gate(
@@ -366,6 +403,7 @@ class CharacterRecord:
         tags: dict[str, list[str]] | None = None,
         sliders: dict[str, float] | None = None,
         free_text: dict[str, str] | None = None,
+        labels: list[str] | None = None,
         identity: IdentityAnchor | None = None,
         required_groups: Iterable[str] = (),
     ) -> "CharacterRecord":
@@ -383,6 +421,7 @@ class CharacterRecord:
             tags=dict(tags or {}),
             sliders=dict(sliders or {}),
             free_text=dict(free_text or {}),
+            labels=list(labels or []),
             identity=identity or IdentityAnchor(),
         )
         for gid in required_groups:
@@ -405,6 +444,7 @@ class CharacterRecord:
             "tags": {k: list(v) for k, v in self.tags.items()},
             "sliders": dict(self.sliders),
             "free_text": dict(self.free_text),
+            "labels": list(self.labels),
             "identity": self.identity.to_dict(),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -424,6 +464,7 @@ class CharacterRecord:
             tags=dict(data.get("tags", {})),
             sliders=dict(data.get("sliders", {})),
             free_text=_rehome_legacy_free_text(dict(data.get("free_text", {}))),
+            labels=data.get("labels", []),  # additive (5.7), no migration
             identity=IdentityAnchor.from_dict(data.get("identity")),
             created_at=str(data.get("created_at", _now_iso())),
             updated_at=str(data.get("updated_at", _now_iso())),

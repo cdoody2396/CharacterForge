@@ -1327,3 +1327,38 @@ def test_bundled_bald_character_needs_no_style_or_color(creator):
     assert "hair_color" not in record.selections
     assert "hair_style" not in record.selections
     assert record.validate_against(creator.catalog) == []
+
+
+# -- 5.7 free-form labels through the creator ---------------------------------
+
+
+def test_labels_round_trip_through_create_and_edit(creator):
+    res = creator.create_character(quick_payload(
+        mode="detailed", labels=["Main Cast", "campaign 2"]))
+    assert res["ok"] is True, res
+    record = creator.store.load(res["id"])
+    assert record.labels == ["Main Cast", "campaign 2"]
+    upd = creator.update_character(res["id"], edit_payload(
+        labels=["Main Cast", "retired"]))
+    assert upd["ok"] is True, upd
+    assert creator.store.load(res["id"]).labels == ["Main Cast", "retired"]
+
+
+def test_labels_shape_and_caps_validated(creator):
+    res = creator.create_character(quick_payload(labels="not a list"))
+    assert res["ok"] is False and res["field"] == "labels"
+    res = creator.create_character(quick_payload(labels=["ok", 3]))
+    assert res["ok"] is False and res["field"] == "labels.1"
+    res = creator.create_character(quick_payload(labels=["x" * 40]))
+    assert res["ok"] is False and res["field"] == "labels.0"
+    res = creator.create_character(quick_payload(
+        labels=[f"t{i}" for i in range(21)]))
+    assert res["ok"] is False and res["field"] == "labels"
+
+
+def test_blocked_label_is_a_structured_block(creator):
+    res = creator.create_character(quick_payload(
+        labels=["preteen schoolgirl"]))
+    assert res["ok"] is False
+    assert res["kind"] == "blocked"
+    assert res["field"].startswith("labels.")

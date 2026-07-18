@@ -237,6 +237,7 @@ class LibraryService:
                              and loaded.identity.lora_path),
             "has_reference": has_reference,
             "tags": self._tag_labels(loaded),
+            "labels": list(loaded.labels),  # 5.7 free-form labels
             "catalog": self._manifest_summary(cid, "catalog"),
             "cache": self._manifest_summary(cid, "cache"),
             "footprint": footprint,
@@ -300,6 +301,7 @@ class LibraryService:
             "tags": {k: list(v) for k, v in loaded.tags.items()},
             "sliders": dict(loaded.sliders),
             "free_text": dict(loaded.free_text),
+            "labels": list(loaded.labels),
             "created_at": loaded.created_at,
             "updated_at": loaded.updated_at,
             "identity": {

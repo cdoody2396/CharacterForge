@@ -29,6 +29,7 @@ window.Library = (function () {
   const state = {
     search: "", sort: "updated_desc", filter: "all",
     tags: new Set(),          // selected tag labels (AND-match)
+    labels: new Set(),        // selected free-form labels (AND-match, 5.7)
     layout: "grid",           // grid | list
   };
 
@@ -85,6 +86,13 @@ window.Library = (function () {
         return true;
       });
     }
+    if (state.labels.size) {
+      rows = rows.filter((r) => {
+        const rl = new Set(r.labels || []);
+        for (const l of state.labels) if (!rl.has(l)) return false;
+        return true;
+      });
+    }
     const cmp = {
       updated_desc: (a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")),
       created_desc: (a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")),
@@ -100,6 +108,14 @@ window.Library = (function () {
     const set = new Set();
     if (data) for (const r of data.characters)
       for (const t of (r.tags || [])) set.add(t);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }
+
+  // Every free-form label across rows (5.7 "your tags").
+  function labelUniverse() {
+    const set = new Set();
+    if (data) for (const r of data.characters)
+      for (const l of (r.labels || [])) set.add(l);
     return [...set].sort((a, b) => a.localeCompare(b));
   }
 
@@ -417,8 +433,21 @@ window.Library = (function () {
     const box = $("lib-tagfilter");
     if (!box) return;
     box.textContent = "";
+    // 5.7 "your tags" first: the user's own labels, visually distinct
+    const labels = labelUniverse();
+    for (const l of labels) {
+      const chip = el("button",
+        "tag-chip label" + (state.labels.has(l) ? " on" : ""), l);
+      chip.type = "button";
+      chip.title = "Your library tag";
+      chip.addEventListener("click", () => {
+        if (state.labels.has(l)) state.labels.delete(l);
+        else state.labels.add(l);
+        render();
+      });
+      box.appendChild(chip);
+    }
     const tags = tagUniverse();
-    if (!tags.length) return;
     for (const t of tags) {
       const chip = el("button", "tag-chip" + (state.tags.has(t) ? " on" : ""), t);
       chip.type = "button";
@@ -429,10 +458,14 @@ window.Library = (function () {
       });
       box.appendChild(chip);
     }
-    if (state.tags.size) {
+    if (state.tags.size || state.labels.size) {
       const clr = el("button", "tag-chip clear", "clear tags");
       clr.type = "button";
-      clr.addEventListener("click", () => { state.tags.clear(); render(); });
+      clr.addEventListener("click", () => {
+        state.tags.clear();
+        state.labels.clear();
+        render();
+      });
       box.appendChild(clr);
     }
   }
@@ -455,6 +488,8 @@ window.Library = (function () {
       // drop selected tags no longer present anywhere
       const universe = new Set(tagUniverse());
       for (const t of [...state.tags]) if (!universe.has(t)) state.tags.delete(t);
+      const labelU = new Set(labelUniverse());
+      for (const l of [...state.labels]) if (!labelU.has(l)) state.labels.delete(l);
       ok = true;
     } catch (err) {
       const list = $("lib-list");

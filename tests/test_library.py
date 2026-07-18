@@ -815,3 +815,17 @@ def test_nonfinite_slider_hand_edit_reads_as_corrupt(creator, library):
     row = library.list_characters()["characters"][0]
     assert row["ok"] is False and row["kind"] == "io"
     assert library.delete_character(cid)["removed"] is True
+
+
+def test_summary_row_and_get_carry_labels(creator, library):
+    from tests.test_library import SEL  # self-import safe under pytest
+
+    res = creator.create_character({
+        "mode": "detailed", "name": "Tagged", "age": 25,
+        "selections": dict(SEL), "labels": ["main cast"]})
+    assert res["ok"] is True, res
+    row = next(r for r in library.list_characters()["characters"]
+               if r["id"] == res["id"])
+    assert row["labels"] == ["main cast"]
+    got = library.get_character(res["id"])
+    assert got["labels"] == ["main cast"]

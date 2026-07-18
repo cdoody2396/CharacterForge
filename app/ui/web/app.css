@@ -756,6 +756,27 @@ button.ghost.danger, .lib-btn.ghost.danger { color: #e06c75; }
 }
 .tag-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .tag-chip.clear { color: var(--blocked); border-color: rgba(229, 72, 77, .45); }
+/* 5.7 free-form "your tags" — visually distinct from option-derived tags */
+.tag-chip.label { border-style: dashed; border-color: var(--ok); color: var(--ok); }
+.tag-chip.label.on { background: var(--ok); border-color: var(--ok); border-style: solid; color: #10241a; }
+
+/* creator labels chip-input (5.7) */
+.label-chips { align-items: center; }
+.label-input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px dashed var(--panel-edge);
+  border-radius: 999px;
+  padding: 6px 12px;
+  min-width: 170px;
+  user-select: text;
+}
+.label-chip { border-style: solid; }
+.label-suggest { margin-top: 6px; }
+.label-suggest-chip { opacity: .75; border-style: dashed; }
+.label-suggest-chip:hover { opacity: 1; border-color: var(--accent); }
 
 .lib-tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .lib-tag {
