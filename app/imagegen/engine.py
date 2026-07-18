@@ -421,11 +421,19 @@ class GenerationResult:
 BackendFactory = Callable[..., Any]
 
 
-class _DiffusersSDXLBackend:
-    """The real backend. Constructed only on the target machine — every heavy
-    import lives inside __init__ so the module imports clean without torch."""
+class _SDXLBackendBase:
+    """Shared mechanics of the three real [HARDWARE] backends: §2 env
+    hygiene, the guarded heavy-import stack, single-file pipeline
+    construction, sampler application, and §3 whole-pipe teardown. Pipeline
+    assembly order and ``generate()`` stay per-subclass — they ARE the mode.
+    Every heavy import lives behind ``_import_stack`` so the module imports
+    clean without torch."""
 
-    def __init__(self, checkpoint: Path, config_dir: Path | None = None):
+    # The noun in the CUDA-guard message ("<mode> runs on the 16 GB ...").
+    _MODE = "base generation"
+
+    @staticmethod
+    def _pin_env(config_dir: Path | None, offline_with_config: bool) -> None:
         # §2 hygiene BEFORE any heavy import: no telemetry, and no tqdm bars —
         # under pythonw sys.stderr is None and a hub/diffusers progress bar
         # firing during from_single_file would raise before our own
@@ -434,6 +442,17 @@ class _DiffusersSDXLBackend:
 
         os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
         os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+        if offline_with_config and config_dir is not None:
+            # Fully-offline mode: every artifact this backend loads is local,
+            # so pin every loader offline. Gated on config_dir so the 3a
+            # validation-phase one-time config warm (config_dir unset) still
+            # works exactly as documented.
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+    def _import_stack(self):
+        """Import torch/diffusers behind the §16 guard; returns
+        (torch, StableDiffusionXLPipeline) with progress bars disabled."""
         try:
             import torch
             from diffusers import StableDiffusionXLPipeline
@@ -446,14 +465,18 @@ class _DiffusersSDXLBackend:
             ) from exc
         if not torch.cuda.is_available():
             raise EngineUnavailable(
-                "no CUDA GPU available — base generation runs on the 16 GB "
+                f"no CUDA GPU available — {self._MODE} runs on the 16 GB "
                 "target machine (DECISIONS.md §3)"
             )
         try:
             diffusers_logging.disable_progress_bar()
         except AttributeError:
             pass  # older diffusers without the helper; env vars still hold
-        self._torch = torch
+        return torch, StableDiffusionXLPipeline
+
+    @staticmethod
+    def _from_single_file(pipeline_cls, torch, checkpoint: Path,
+                          config_dir: Path | None):
         # Offline posture (§2): with a bundled pipeline-config dir configured
         # (models.image.pipeline_config_dir) the load is fully local; without
         # one, diffusers resolves the SDXL component configs from the HF Hub
@@ -463,14 +486,7 @@ class _DiffusersSDXLBackend:
         if config_dir is not None:
             kwargs["config"] = str(config_dir)
             kwargs["local_files_only"] = True
-        pipe = StableDiffusionXLPipeline.from_single_file(str(checkpoint), **kwargs)
-        pipe.to("cuda")
-        # ~1MP decodes fit 16 GB comfortably; slicing costs little and keeps
-        # headroom for the heavy variant (§3: slow is fine).
-        pipe.enable_vae_slicing()
-        pipe.set_progress_bar_config(disable=True)  # no console (§2)
-        self._pipe = pipe
-        self._sampler_applied: str | None = None
+        return pipeline_cls.from_single_file(str(checkpoint), **kwargs)
 
     def _apply_sampler(self, sampler: str) -> None:
         if sampler == self._sampler_applied:
@@ -483,6 +499,38 @@ class _DiffusersSDXLBackend:
             self._pipe.scheduler.config, **kwargs
         )
         self._sampler_applied = sampler
+
+    def close(self) -> None:
+        # Pipelines sit in reference cycles: drop the reference, force the
+        # collect, THEN empty the cache — otherwise the tensors outlive the
+        # release and the swap scaffold's whole point (§3) is defeated.
+        # Dropping the whole pipe frees everything it carries (checkpoint +
+        # any adapter/encoder/LoRA) together.
+        import gc
+
+        pipe, self._pipe = self._pipe, None
+        del pipe
+        gc.collect()
+        self._torch.cuda.empty_cache()
+
+
+class _DiffusersSDXLBackend(_SDXLBackendBase):
+    """The real backend. Constructed only on the target machine."""
+
+    _MODE = "base generation"
+
+    def __init__(self, checkpoint: Path, config_dir: Path | None = None):
+        self._pin_env(config_dir, offline_with_config=False)
+        torch, pipeline_cls = self._import_stack()
+        self._torch = torch
+        pipe = self._from_single_file(pipeline_cls, torch, checkpoint, config_dir)
+        pipe.to("cuda")
+        # ~1MP decodes fit 16 GB comfortably; slicing costs little and keeps
+        # headroom for the heavy variant (§3: slow is fine).
+        pipe.enable_vae_slicing()
+        pipe.set_progress_bar_config(disable=True)  # no console (§2)
+        self._pipe = pipe
+        self._sampler_applied: str | None = None
 
     def generate(self, request: GenerationRequest):
         torch = self._torch
@@ -502,29 +550,17 @@ class _DiffusersSDXLBackend:
             )
         return out.images[0]
 
-    def close(self) -> None:
-        # Pipelines sit in reference cycles: drop the reference, force the
-        # collect, THEN empty the cache — otherwise the tensors outlive the
-        # release and the swap scaffold's whole point (§3) is defeated.
-        import gc
 
-        pipe, self._pipe = self._pipe, None
-        del pipe
-        gc.collect()
-        self._torch.cuda.empty_cache()
-
-
-class _DiffusersIPAdapterSDXLBackend:
+class _DiffusersIPAdapterSDXLBackend(_SDXLBackendBase):
     """The real [HARDWARE] steered backend (Stage 3b). Same SDXL pipeline as
     the base backend, plus a loaded IP-Adapter and its image encoder. Built
     fresh for the identity mode and torn down whole on a mode switch — the
     engine never toggles ``load_ip_adapter``/``unload_ip_adapter`` on a
     resident pipe (that stateful path is hardware-only-testable, and a plain
     call on a loaded adapter raises), so all mode logic lives in the
-    sandbox-verifiable engine layer.
+    sandbox-verifiable engine layer."""
 
-    Every heavy import stays inside __init__ so the module imports clean
-    without torch/diffusers."""
+    _MODE = "identity generation"
 
     def __init__(
         self,
@@ -534,42 +570,10 @@ class _DiffusersIPAdapterSDXLBackend:
     ):
         if ip_config is None:  # defensive: the factory only builds this with one
             raise EngineUnavailable("no IP-Adapter configured for identity generation")
-        import os
-
-        os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
-        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-        if config_dir is not None:
-            # Fully-offline mode: the SDXL config AND the IP-Adapter/encoder are
-            # all local, so pin every loader offline. Gated on config_dir so the
-            # 3a validation-phase one-time config warm (config_dir unset) still
-            # works exactly as documented.
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-        try:
-            import torch
-            from diffusers import StableDiffusionXLPipeline
-            from diffusers.utils import logging as diffusers_logging
-        except ImportError as exc:
-            raise EngineUnavailable(
-                "image dependencies are not installed — on the target machine "
-                "run: pip install -r requirements-full.txt "
-                f"(missing: {exc.name or exc})"
-            ) from exc
-        if not torch.cuda.is_available():
-            raise EngineUnavailable(
-                "no CUDA GPU available — identity generation runs on the 16 GB "
-                "target machine (DECISIONS.md §3)"
-            )
-        try:
-            diffusers_logging.disable_progress_bar()
-        except AttributeError:
-            pass
+        self._pin_env(config_dir, offline_with_config=True)
+        torch, pipeline_cls = self._import_stack()
         self._torch = torch
-        kwargs: dict = {"torch_dtype": torch.float16, "use_safetensors": True}
-        if config_dir is not None:
-            kwargs["config"] = str(config_dir)
-            kwargs["local_files_only"] = True
-        pipe = StableDiffusionXLPipeline.from_single_file(str(checkpoint), **kwargs)
+        pipe = self._from_single_file(pipeline_cls, torch, checkpoint, config_dir)
         pipe.set_progress_bar_config(disable=True)
         # Load the IP-Adapter + its ViT-H image encoder. image_encoder_folder is
         # the pinned slash-form (repo-root -> ViT-H) — see the module constant
@@ -603,18 +607,6 @@ class _DiffusersIPAdapterSDXLBackend:
         self._pipe = pipe
         self._sampler_applied: str | None = None
         self._scale_applied: float | None = None
-
-    def _apply_sampler(self, sampler: str) -> None:
-        if sampler == self._sampler_applied:
-            return
-        import diffusers
-
-        cls_name, kwargs = SAMPLERS[sampler]
-        scheduler_cls = getattr(diffusers, cls_name)
-        self._pipe.scheduler = scheduler_cls.from_config(
-            self._pipe.scheduler.config, **kwargs
-        )
-        self._sampler_applied = sampler
 
     def generate(self, request: GenerationRequest, reference: Path):
         torch = self._torch
@@ -653,23 +645,15 @@ class _DiffusersIPAdapterSDXLBackend:
             )
         return out.images[0]
 
-    def close(self) -> None:
-        # Dropping the whole pipe frees the checkpoint + adapter + encoder
-        # together; unload_ip_adapter() is never needed (§3 teardown).
-        import gc
 
-        pipe, self._pipe = self._pipe, None
-        del pipe
-        gc.collect()
-        self._torch.cuda.empty_cache()
-
-
-class _DiffusersLoraSDXLBackend:
+class _DiffusersLoraSDXLBackend(_SDXLBackendBase):
     """The real [HARDWARE] catalog backend (Stage 3e). Same SDXL pipeline as
     the base backend plus a loaded per-character identity LoRA (unfused; the
     strength is applied per-generate via ``cross_attention_kwargs``, so no
     reload is needed to retune it). Built fresh for the catalog mode and torn
-    down whole on a mode switch. Every heavy import stays inside __init__."""
+    down whole on a mode switch."""
+
+    _MODE = "catalog generation"
 
     def __init__(
         self,
@@ -679,38 +663,10 @@ class _DiffusersLoraSDXLBackend:
     ):
         if lora is None:  # defensive: the factory only builds this with one
             raise EngineUnavailable("no LoRA configured for catalog generation")
-        import os
-
-        os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
-        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-        if config_dir is not None:
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-        try:
-            import torch
-            from diffusers import StableDiffusionXLPipeline
-            from diffusers.utils import logging as diffusers_logging
-        except ImportError as exc:
-            raise EngineUnavailable(
-                "image dependencies are not installed — on the target machine "
-                "run: pip install -r requirements-full.txt "
-                f"(missing: {exc.name or exc})"
-            ) from exc
-        if not torch.cuda.is_available():
-            raise EngineUnavailable(
-                "no CUDA GPU available — catalog generation runs on the 16 GB "
-                "target machine (DECISIONS.md §3)"
-            )
-        try:
-            diffusers_logging.disable_progress_bar()
-        except AttributeError:
-            pass
+        self._pin_env(config_dir, offline_with_config=True)
+        torch, pipeline_cls = self._import_stack()
         self._torch = torch
-        kwargs: dict = {"torch_dtype": torch.float16, "use_safetensors": True}
-        if config_dir is not None:
-            kwargs["config"] = str(config_dir)
-            kwargs["local_files_only"] = True
-        pipe = StableDiffusionXLPipeline.from_single_file(str(checkpoint), **kwargs)
+        pipe = self._from_single_file(pipeline_cls, torch, checkpoint, config_dir)
         pipe.to("cuda")
         pipe.enable_vae_slicing()
         pipe.set_progress_bar_config(disable=True)
@@ -744,18 +700,6 @@ class _DiffusersLoraSDXLBackend:
         self._pipe = pipe
         self._sampler_applied: str | None = None
 
-    def _apply_sampler(self, sampler: str) -> None:
-        if sampler == self._sampler_applied:
-            return
-        import diffusers
-
-        cls_name, kwargs = SAMPLERS[sampler]
-        scheduler_cls = getattr(diffusers, cls_name)
-        self._pipe.scheduler = scheduler_cls.from_config(
-            self._pipe.scheduler.config, **kwargs
-        )
-        self._sampler_applied = sampler
-
     def generate(self, request: GenerationRequest):
         torch = self._torch
         self._apply_sampler(request.sampler)
@@ -777,14 +721,6 @@ class _DiffusersLoraSDXLBackend:
                 cross_attention_kwargs={"scale": scale},
             )
         return out.images[0]
-
-    def close(self) -> None:
-        import gc
-
-        pipe, self._pipe = self._pipe, None
-        del pipe
-        gc.collect()
-        self._torch.cuda.empty_cache()
 
 
 def _default_backend_factory(
