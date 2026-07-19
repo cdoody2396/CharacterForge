@@ -290,8 +290,9 @@ _HEAVY_SPECIES = {  # 5.7: each carries its skin_type surface (the form would)
                 "faceplate": "synth_skin_seams"},
 }
 
-# surfaces that hide skin_tone — the form drops the tone for these
-_TONELESS_SURFACES = {"full_fur", "full_plumage", "full_scales", "stone",
+# surfaces without visible skin (5.7 UI pass): skin_tone now stays visible
+# and required on every surface; complexion is the group the form drops here
+_SKINLESS_SURFACES = {"full_fur", "full_plumage", "full_scales", "stone",
                       "metal_chassis", "ethereal_form"}
 
 _HEAVY_P2_P3 = {
@@ -327,8 +328,8 @@ def test_real_catalog_p0_p1_fit_the_first_window(race, settings, assembler):
 
     selections = {"race": race, **_HEAVY_BASE, **_HEAVY_SPECIES[race],
                   **_HEAVY_P2_P3}
-    if selections["skin_type"] in _TONELESS_SURFACES:
-        selections.pop("skin_tone", None)
+    if selections["skin_type"] in _SKINLESS_SURFACES:
+        selections.pop("complexion", None)
     tags = {gid: [o.id for o in catalog.get(gid).options]
             for gid in ("eye_features", "other_features", "marks",
                         "tattoo_placement", "piercings", "accessories",

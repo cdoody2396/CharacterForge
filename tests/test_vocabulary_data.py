@@ -273,9 +273,12 @@ _FAMILY_RECORDS = {
               "scale_color": "emerald", "scale_sheen": "iridescent"},
     "harpy": {"lower_body": "bird_legs", "skin_type": "feathers_over_skin",
               "feather_color": "white", "wings": "large_feathered"},
-    "dragon_anthro": {"skin_type": "full_scales", "scale_color": "obsidian",
-                      "scale_sheen": "glossy", "horns": "curved_back",
-                      "tail": "spiked_dragon", "wings": "dragon"},
+    # 5.7 UI pass: on full_scales the tone lives in skin_tone (relabeled
+    # Scale Tone) — scale_color is over-skin only now, so the form never
+    # sends it here
+    "dragon_anthro": {"skin_type": "full_scales", "scale_sheen": "glossy",
+                      "horns": "curved_back", "tail": "spiked_dragon",
+                      "wings": "dragon"},
     "succubus_incubus": {"horns": "demon_crown", "tail": "spade_demon",
                          "wings": "bat"},
     "ghost": {"undead_state": "spectral", "skin_type": "ethereal_form",
@@ -288,9 +291,11 @@ _FAMILY_RECORDS = {
                  "ember_orange", "elemental_marks": None},  # multi below
 }
 
-# surfaces that hide skin_tone (required-when-visible): the maximal record
-# drops its tone for these, exactly as the form would
-_TONELESS_SURFACES = {"full_fur", "full_plumage", "full_scales", "stone",
+# surfaces without visible skin (5.7 UI pass): skin_tone is now ALWAYS
+# visible and required (it relabels per surface in the creator), but
+# complexion keys to skin-bearing surfaces — the maximal record drops it for
+# these, exactly as the form would
+_SKINLESS_SURFACES = {"full_fur", "full_plumage", "full_scales", "stone",
                       "metal_chassis", "ethereal_form"}
 
 _GATED_SPREAD = [  # exercised across the family records, all four configs
@@ -327,8 +332,8 @@ def _maximal_record(catalog, race, extra, gated):
     }
     selections.update({k: v for k, v in extra.items() if v is not None})
     selections.update({k: v for k, v in gated.items() if k != "outfit"})
-    if selections["skin_type"] in _TONELESS_SURFACES:
-        selections.pop("skin_tone", None)  # hidden -> the form never sends it
+    if selections["skin_type"] in _SKINLESS_SURFACES:
+        selections.pop("complexion", None)  # hidden -> the form never sends it
     tags = {
         "eye_features": [o.id for o in catalog.get("eye_features").options],
         "other_features": [o.id for o in
@@ -441,7 +446,7 @@ def test_describe_ships_v2_conditions_and_classes(tmp_path, audit):
     described = creator.describe()
     by_id = {g["id"]: g for g in described["groups"]}
     assert by_id["fur_color"]["visible_when"] == {
-        "group": "skin_type", "in": ["fur_over_skin", "full_fur"]}
+        "group": "skin_type", "in": ["fur_over_skin"]}  # 5.7 UI pass
     assert by_id["genitalia_size"]["visible_when"] == {
         "group": "genitalia", "in": ["penis", "both"]}
     race_opts = {o["id"]: o for o in by_id["race"]["options"]}

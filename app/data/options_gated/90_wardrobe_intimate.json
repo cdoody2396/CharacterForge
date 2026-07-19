@@ -2,12 +2,12 @@
   "groups": [
     {
       "id": "outfit",
-      "_note": "Gated extension fragment (V2 flag 7 / B56 wardrobe_intimate): appends intimate options to the bundled 'outfit' group. Options only - no scalar overrides (gated files load after every ungated directory). Structurally absent when content.gate_open is false.",
+      "_note": "Gated extension fragment (V2 flag 7 / B56 wardrobe_intimate): appends intimate options to the bundled 'outfit' group. Options only - no scalar overrides (gated files load after every ungated directory). Structurally absent when content.gate_open is false. 5.7 UI pass: class 'intimate' buckets these under their own grouped-picker subsection.",
       "options": [
-        { "id": "lingerie", "label": "Lingerie", "prompt": "lingerie" },
-        { "id": "boudoir_set", "label": "Boudoir Set", "prompt": "boudoir lingerie set" },
-        { "id": "towel_only", "label": "Towel Only", "prompt": "towel wrap" },
-        { "id": "nude", "label": "Nude", "prompt": "nude" }
+        { "id": "lingerie", "label": "Lingerie", "prompt": "lingerie", "class": ["intimate"] },
+        { "id": "boudoir_set", "label": "Boudoir Set", "prompt": "boudoir lingerie set", "class": ["intimate"] },
+        { "id": "towel_only", "label": "Towel Only", "prompt": "towel wrap", "class": ["intimate"] },
+        { "id": "nude", "label": "Nude", "prompt": "nude", "class": ["intimate"] }
       ]
     }
   ]

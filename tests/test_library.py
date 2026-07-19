@@ -859,6 +859,7 @@ def test_rows_carry_attribute_labels(creator, library):
         "mode": "detailed", "name": "Ghost", "age": 300,
         "selections": {"race": "ghost", "gender_presentation": "androgynous",
                        "skin_type": "ethereal_form",
+                       "skin_tone": "pearl_white",  # 5.7 UI pass: always required
                        "hair_color": "white", "hair_style": "wavy",
                        "eye_color": "grey", "body_type": "willowy"}})
     assert res["ok"] is True, res

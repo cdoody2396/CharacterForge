@@ -67,10 +67,11 @@ def test_bundled_catalog_declares_sections_and_quick():
     assert catalog.get("archetype").quick is False
     quick_ids = {g.id for g in catalog.groups() if g.quick}
     # 5.7 quick composition: the 8 required + header-hosted apparent_age +
-    # the chat-side personality archetype
+    # the chat-side personality archetype + hair_length (5.7 UI pass, user
+    # decision 2026-07-18: quick without required)
     assert {"race", "gender_presentation", "body_type", "skin_type",
             "skin_tone", "hair_color", "hair_style", "eye_color",
-            "apparent_age", "personality_archetype"} == quick_ids
+            "apparent_age", "personality_archetype", "hair_length"} == quick_ids
 
 
 def test_bundled_colors_parse():
@@ -1296,19 +1297,25 @@ def test_preview_path_stays_ungated_by_required(tmp_path, audit):
     assert "skin_tone" not in record.selections
 
 
-def test_bundled_android_creates_without_skin_tone(creator):
-    # End-to-end against the real bundled data: a metal-chassis android needs
-    # no skin tone (5.7 surface model); the record saves and lints clean.
+def test_bundled_android_requires_a_tone_on_every_surface(creator):
+    # End-to-end against the real bundled data. 5.7 UI pass (user decision
+    # 2026-07-18): skin_tone is the one always-visible tone slot (the creator
+    # relabels it Chassis Tone on metal_chassis) — a record without it is
+    # rejected on ANY surface, and with it the record saves and lints clean.
+    base = {"race": "android", "gender_presentation": "androgynous",
+            "skin_type": "metal_chassis", "chassis_finish": "chrome",
+            "hair_color": "silver", "hair_style": "bob",
+            "eye_color": "blue", "body_type": "average"}
+    res = creator.create_character({
+        "mode": "quick", "name": "Unit-7", "age": 30, "selections": base})
+    assert res["ok"] is False and res["kind"] == "required"
+    assert res["field"] == "selections.skin_tone"
     res = creator.create_character({
         "mode": "quick", "name": "Unit-7", "age": 30,
-        "selections": {"race": "android", "gender_presentation": "androgynous",
-                       "skin_type": "metal_chassis",
-                       "chassis_finish": "chrome",
-                       "hair_color": "silver", "hair_style": "bob",
-                       "eye_color": "blue", "body_type": "average"}})
+        "selections": {**base, "skin_tone": "chrome"}})
     assert res["ok"] is True, res
     record = creator.store.load(res["id"])
-    assert "skin_tone" not in record.selections
+    assert record.selections["skin_tone"] == "chrome"
     assert record.validate_against(creator.catalog) == []
 
 

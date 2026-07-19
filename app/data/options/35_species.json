@@ -103,15 +103,15 @@
     },
     {
       "id": "fur_color",
-      "hint": "Appears when the surface is fur.",
+      "hint": "Color of the fur patches over skin. On Full Fur the tone slot in Appearance becomes Fur Tone and carries the color instead.",
       "label": "Fur Color",
       "kind": "single",
       "field": "fur_color",
       "order": 55,
       "section": "Species Features",
       "tier": "P1",
-      "visible_when": { "group": "skin_type", "in": ["fur_over_skin", "full_fur"] },
-      "_note": "5.7: re-keyed from race class to the unified skin_type surface (fur_coverage retired - its coverage prompts live on the skin_type compounds).",
+      "visible_when": { "group": "skin_type", "in": ["fur_over_skin"] },
+      "_note": "5.7: re-keyed from race class to the unified skin_type surface (fur_coverage retired - its coverage prompts live on the skin_type compounds). 5.7 UI pass (user decision 2026-07-18): narrowed to fur_over_skin - on full_fur the always-visible skin_tone relabels to Fur Tone and is the single tone pick.",
       "options": [
         { "id": "white", "label": "White", "prompt": "white fur", "color": "#f2f2f2" },
         { "id": "cream", "label": "Cream", "prompt": "cream fur", "color": "#f0e3c8" },
@@ -127,6 +127,27 @@
         { "id": "blue_grey", "label": "Blue-Grey", "prompt": "blue grey fur", "color": "#7d8ba8" },
         { "id": "pastel_pink", "label": "Pastel Pink", "prompt": "pastel pink fur", "color": "#eebcd0" },
         { "id": "lavender", "label": "Lavender", "prompt": "lavender fur", "color": "#b9a3d8" }
+      ]
+    },
+    {
+      "id": "fur_condition",
+      "hint": "How the coat reads - the fur surfaces' counterpart to Complexion.",
+      "label": "Fur Condition",
+      "kind": "single",
+      "field": "fur_condition",
+      "order": 57,
+      "section": "Species Features",
+      "tier": "P3",
+      "visible_when": { "group": "skin_type", "in": ["fur_over_skin", "full_fur"] },
+      "_note": "5.7 UI pass (user decision 2026-07-18): complexion updates by surface - this group is the fur-surface finish (matted et al.), keyed like fur_pattern.",
+      "options": [
+        { "id": "groomed", "label": "Groomed", "prompt": "well-groomed fur" },
+        { "id": "sleek", "label": "Sleek", "prompt": "sleek fur" },
+        { "id": "fluffy", "label": "Fluffy", "prompt": "fluffy fur" },
+        { "id": "plush", "label": "Plush", "prompt": "plush fur" },
+        { "id": "shaggy", "label": "Shaggy", "prompt": "shaggy fur" },
+        { "id": "coarse", "label": "Coarse", "prompt": "coarse fur" },
+        { "id": "matted", "label": "Matted", "prompt": "matted fur" }
       ]
     },
     {
@@ -152,15 +173,15 @@
     },
     {
       "id": "scale_color",
-      "hint": "Appears when the surface is scales.",
+      "hint": "Color of the scale patches over skin. On Full Scales the tone slot in Appearance becomes Scale Tone and carries the color instead.",
       "label": "Scale Color",
       "kind": "single",
       "field": "scale_color",
       "order": 58,
       "section": "Species Features",
       "tier": "P1",
-      "visible_when": { "group": "skin_type", "in": ["scales_over_skin", "full_scales"] },
-      "_note": "5.7: re-keyed from race class to skin_type (scale_coverage retired).",
+      "visible_when": { "group": "skin_type", "in": ["scales_over_skin"] },
+      "_note": "5.7: re-keyed from race class to skin_type (scale_coverage retired). 5.7 UI pass (user decision 2026-07-18): narrowed to scales_over_skin - on full_scales skin_tone relabels to Scale Tone.",
       "options": [
         { "id": "emerald", "label": "Emerald", "prompt": "emerald scales", "color": "#2f9e5f" },
         { "id": "jade", "label": "Jade", "prompt": "jade scales", "color": "#6fae8f" },
@@ -196,15 +217,15 @@
     },
     {
       "id": "feather_color",
-      "hint": "Appears when the surface is feathers.",
+      "hint": "Color of the feather patches over skin. On Full Plumage the tone slot in Appearance becomes Plumage Tone and carries the color instead.",
       "label": "Feather Color",
       "kind": "single",
       "field": "feather_color",
       "order": 61,
       "section": "Species Features",
       "tier": "P1",
-      "visible_when": { "group": "skin_type", "in": ["feathers_over_skin", "full_plumage"] },
-      "_note": "5.7: re-keyed from race class to skin_type (feather_coverage retired).",
+      "visible_when": { "group": "skin_type", "in": ["feathers_over_skin"] },
+      "_note": "5.7: re-keyed from race class to skin_type (feather_coverage retired). 5.7 UI pass (user decision 2026-07-18): narrowed to feathers_over_skin - on full_plumage skin_tone relabels to Plumage Tone.",
       "options": [
         { "id": "white", "label": "White", "prompt": "white feathers", "color": "#f2f2f2" },
         { "id": "black", "label": "Black", "prompt": "black feathers", "color": "#1f1f23" },
@@ -218,6 +239,26 @@
         { "id": "teal", "label": "Teal", "prompt": "teal feathers", "color": "#4d9e97" },
         { "id": "green", "label": "Green", "prompt": "green feathers", "color": "#4d9e6a" },
         { "id": "violet", "label": "Violet", "prompt": "violet feathers", "color": "#8a5fc8" }
+      ]
+    },
+    {
+      "id": "feather_condition",
+      "hint": "How the plumage reads - the feather surfaces' counterpart to Complexion.",
+      "label": "Plumage Condition",
+      "kind": "single",
+      "field": "feather_condition",
+      "order": 60,
+      "section": "Species Features",
+      "tier": "P3",
+      "visible_when": { "group": "skin_type", "in": ["feathers_over_skin", "full_plumage"] },
+      "_note": "5.7 UI pass (user decision 2026-07-18): complexion updates by surface - the feather-surface finish. Order 60 slots it beside the feather block (scale/feather groups are never co-visible).",
+      "options": [
+        { "id": "preened", "label": "Preened", "prompt": "preened feathers" },
+        { "id": "sleek", "label": "Sleek", "prompt": "sleek plumage" },
+        { "id": "fluffed", "label": "Fluffed", "prompt": "fluffed plumage" },
+        { "id": "iridescent", "label": "Iridescent", "prompt": "iridescent plumage" },
+        { "id": "ruffled", "label": "Ruffled", "prompt": "ruffled feathers" },
+        { "id": "molting", "label": "Molting", "prompt": "molting plumage" }
       ]
     },
     {

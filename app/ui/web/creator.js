@@ -103,9 +103,11 @@ window.Creator = (function () {
     // input out from under the keyboard mid-typing)
     const wrap = document.querySelector(
       '#creator-form .field[data-field="selections.apparent_age"]');
-    if (wrap)
+    if (wrap) {
       for (const btn of wrap.querySelectorAll(".opt"))
         btn.classList.toggle("on", btn.dataset.oid === band);
+      setCurrent(wrap, g); // keep the summary readout in step (5.7 UI pass)
+    }
   }
 
   // race class -> suggested surface. Priority resolves multi-class races
@@ -131,6 +133,23 @@ window.Creator = (function () {
     if ((st.options || []).some((o) => o.id === surface))
       state.selections.skin_type = surface;
     // race is a condition referent, so the caller's render() repaints
+  }
+
+  // ---- 5.7 UI pass: surface -> tone-slot label --------------------------
+  // skin_tone is the one always-visible tone slot; its label follows the
+  // Surface pick (full fur -> Fur Tone, etc.). Kept here beside
+  // SURFACE_BY_CLASS until the image-gen wiring session moves per-surface
+  // prompt wording (and likely this map) into the data files.
+  const TONE_LABEL_BY_SURFACE = {
+    full_fur: "Fur Tone", full_plumage: "Plumage Tone",
+    full_scales: "Scale Tone", stone: "Stone Tone",
+    metal_chassis: "Chassis Tone", ethereal_form: "Form Tone",
+  };
+
+  function groupLabel(group) {
+    if (group.id === "skin_tone")
+      return TONE_LABEL_BY_SURFACE[state.selections.skin_type] || group.label;
+    return group.label;
   }
 
   // ---- 5.6a data-driven conditionality (visible_when) -------------------
@@ -252,18 +271,59 @@ window.Creator = (function () {
 
   // ------------------------------------------------------- field controls
 
-  function fieldWrap(dataField, labelText, hint, required) {
-    const wrap = el("div", "field");
+  // Collapsible field boxes (5.7 UI pass): every option-group box is a
+  // <details> whose summary carries the label AND the current selection, so
+  // a collapsed box still reads at a glance. Boxes default OPEN; a user's
+  // collapse survives re-renders via fieldClosedKeys (collected in render()).
+  // Plain fields (name / age / free text / labels) stay <div>s.
+  let fieldClosedKeys = new Set();
+
+  function fieldWrap(dataField, labelText, hint, required, collapsible) {
+    const wrap = el(collapsible ? "details" : "div", "field");
     wrap.dataset.field = dataField;
-    const label = el("div", "field-label", labelText);
+    const label = el(collapsible ? "summary" : "div", "field-label", labelText);
+    if (collapsible) {
+      label.dataset.key = "field:" + dataField;
+      wrap.open = !fieldClosedKeys.has("field:" + dataField);
+    }
     if (required) {
       const star = el("span", "req-mark", " *");
       star.title = "Required — part of the render-identity minimum";
       label.appendChild(star);
     }
+    if (collapsible) label.appendChild(el("span", "field-current"));
     wrap.appendChild(label);
     if (hint) wrap.appendChild(el("div", "field-hint", hint));
     return wrap;
+  }
+
+  // The summary's live "what's picked" readout. Multi selections list two
+  // labels then count the rest; sliders echo their value + band.
+  function currentSummary(group) {
+    if (group.kind === "slider" || group.kind === "number") {
+      const v = state.sliders[group.id];
+      if (v === undefined || v === null) return "—";
+      const metric = group.unit ? `${v} ${group.unit}` : String(v);
+      const band = bandFor(group, Number(v));
+      return band ? `${metric} · ${band}` : metric;
+    }
+    const chosen = chosenIn(group);
+    if (!chosen.length) return "—";
+    const labels = chosen.map((id) => {
+      const o = (group.options || []).find((x) => x.id === id);
+      return o ? o.label : id;
+    });
+    return labels.length > 2
+      ? `${labels.slice(0, 2).join(", ")} +${labels.length - 2}`
+      : labels.join(", ");
+  }
+
+  function setCurrent(wrap, group) {
+    const cur = wrap.querySelector(".field-current");
+    if (!cur) return;
+    const text = currentSummary(group);
+    cur.textContent = text;
+    cur.classList.toggle("none", text === "—");
   }
 
   // "?" info popover (5.7): click-toggled, blur-dismissed, with the native
@@ -330,6 +390,7 @@ window.Creator = (function () {
         for (const sib of row.children)
           sib.classList.toggle("on", sib === btn && !wasOn);
         clearFieldError(wrap);
+        setCurrent(wrap, group);
         selectionChanged(group.id);
       });
       row.appendChild(btn);
@@ -354,6 +415,7 @@ window.Creator = (function () {
           list.push(o.id);
           btn.classList.add("on");
         }
+        setCurrent(wrap, group);
         selectionChanged(group.id);
       });
       row.appendChild(btn);
@@ -380,9 +442,18 @@ window.Creator = (function () {
   }
 
   // Class-header grouping (5.7): generic — any picker whose options mostly
-  // carry `class` metadata groups under humanized class headers (race and
-  // hybrid_race today, any future classed catalog for free). Class-less
-  // options bucket as Humanoid, first (data order puts human at the top).
+  // carry `class` metadata groups under humanized class headers (race, hair
+  // styles, wardrobe, accessories, marks, class/archetype — any classed
+  // catalog for free). Class-less options bucket under a fallback header:
+  // the species picker's class-less entries ARE the humanoids (data order
+  // puts human first); any other catalog's stragglers read "Other".
+  const FALLBACK_BUCKET = { race: "Humanoid" };
+
+  // 5.7 UI pass: per-bucket collapse state, `${group id}:${bucket}` -> bool.
+  // Unset = default: collapsed unless the bucket holds a selection, so a
+  // fresh picker reads as a category index. Session-scoped, survives paints.
+  const pickerOpenBuckets = {};
+
   function classedFraction(group) {
     if (!group.options.length) return 0;
     return group.options.filter((o) => Array.isArray(o["class"]) &&
@@ -423,7 +494,19 @@ window.Creator = (function () {
 
     function isOn(id) { return chosen().includes(id); }
 
+    // the collapsed-unless-chosen default must not slam a bucket shut the
+    // moment its option is DEselected — clicking a tile pins its bucket open
+    function pinBucketOpen(id) {
+      const o = group.options.find((x) => x.id === id);
+      if (!o) return;
+      const key = (Array.isArray(o["class"]) && o["class"].length)
+        ? humanizeClass(o["class"][0])
+        : (FALLBACK_BUCKET[group.id] || "Other");
+      pickerOpenBuckets[group.id + ":" + key] = true;
+    }
+
     function toggle(id) {
+      pinBucketOpen(id);
       if (multi) {
         const list = state.tags[group.id] || (state.tags[group.id] = []);
         const at = list.indexOf(id);
@@ -435,6 +518,7 @@ window.Creator = (function () {
       }
       manualPick.add(group.id); // a hand pick stops auto-defaults (5.7)
       clearFieldError(wrap);
+      setCurrent(wrap, group);
       paint();
       selectionChanged(group.id);
     }
@@ -464,18 +548,36 @@ window.Creator = (function () {
         matches = [...matches].sort((a, b) => a.label.localeCompare(b.label));
       grid.textContent = "";
       const capped = matches.slice(0, PICKER_RENDER_CAP);
-      // class-group headers in curated order only (a search or A–Z flattens)
+      // class-group headers in curated order only (a search or A–Z flattens);
+      // 5.7 UI pass: each header is a collapsible disclosure — collapsed by
+      // default (unless it holds the selection) so big grids read as a
+      // category index first
       if (!q && !az() && classedFraction(group) >= 0.5) {
         const buckets = new Map(); // key -> tiles, keyed in data order
         for (const o of capped) {
           const key = (Array.isArray(o["class"]) && o["class"].length)
-            ? humanizeClass(o["class"][0]) : "Humanoid";
+            ? humanizeClass(o["class"][0])
+            : (FALLBACK_BUCKET[group.id] || "Other");
           if (!buckets.has(key)) buckets.set(key, []);
           buckets.get(key).push(o);
         }
         for (const [key, opts] of buckets) {
-          grid.appendChild(el("div", "picker-group-head", key));
-          for (const o of opts) grid.appendChild(makeTile(o));
+          const bkey = group.id + ":" + key;
+          const hasChosen = opts.some((o) => isOn(o.id));
+          const open = bkey in pickerOpenBuckets
+            ? pickerOpenBuckets[bkey] : hasChosen;
+          const head = el("button", "picker-group-head" + (open ? " open" : ""));
+          head.type = "button";
+          head.appendChild(el("span", "picker-group-caret", open ? "▾" : "▸"));
+          head.appendChild(el("span", null, key));
+          head.appendChild(el("span", "picker-group-count",
+            hasChosen ? `✓ · ${opts.length}` : String(opts.length)));
+          head.addEventListener("click", () => {
+            pickerOpenBuckets[bkey] = !open;
+            paint();
+          });
+          grid.appendChild(head);
+          if (open) for (const o of opts) grid.appendChild(makeTile(o));
         }
       } else {
         for (const o of capped) grid.appendChild(makeTile(o));
@@ -522,7 +624,7 @@ window.Creator = (function () {
   }
 
   function numericControl(group, label, required) {
-    const wrap = fieldWrap("sliders." + group.id, label, null, required);
+    const wrap = fieldWrap("sliders." + group.id, label, null, required, true);
     const min = group.min ?? 0;
     const max = group.max ?? 100;
     if (!(group.id in state.sliders))
@@ -551,6 +653,7 @@ window.Creator = (function () {
       if (input.value !== "" && !Number.isNaN(v)) {
         state.sliders[group.id] = v;
         show();
+        setCurrent(wrap, group);
         // no selectionChanged: numeric-targeted conditions degrade to
         // always-visible (visibleNow), so a slider can never flip visibility
         // — and a mid-drag re-render would tear the control out from under
@@ -561,23 +664,29 @@ window.Creator = (function () {
     row.appendChild(value);
     wrap.appendChild(row);
     wrap.appendChild(band);
+    setCurrent(wrap, group);
     return wrap;
   }
 
   // Widget dispatch — the backend hands us the resolved widget per group
   // (derivation already applied), so there is one place that maps widget->DOM.
   function control(group, labelOverride) {
-    const label = labelOverride || group.label;
+    const label = labelOverride || groupLabel(group);
     const required = !!group.required;
     if (group.widget === "slider") return numericControl(group, label, required);
     const wrap = fieldWrap(
-      (group.multi ? "tags." : "selections.") + group.id, label, null, required);
-    if (group.hint)  // 5.7 §15 hint -> "?" popover on the label
-      wrap.querySelector(".field-label").appendChild(infoPop(group.hint));
+      (group.multi ? "tags." : "selections.") + group.id, label, null, required,
+      true);
+    if (group.hint) {  // 5.7 §15 hint -> "?" popover on the label
+      const lbl = wrap.querySelector(".field-label");
+      // before the right-aligned current-selection readout, after the text
+      lbl.insertBefore(infoPop(group.hint), lbl.querySelector(".field-current"));
+    }
     if (group.widget === "picker") pickerControl(group, wrap);
     else if (group.multi) multiRow(group, wrap, group.widget);
     else singleRow(group, wrap, group.widget,
                    group.widget === "segmented" ? "seg-row" : "chips");
+    setCurrent(wrap, group);
     return wrap;
   }
 
@@ -779,6 +888,11 @@ window.Creator = (function () {
     const openKeys = new Set(
       [...root.querySelectorAll("details[open] > summary")]
         .map((s) => s.dataset.key || s.textContent));
+    // field boxes are the inverse (5.7 UI pass): they default OPEN, so track
+    // the ones the user closed
+    fieldClosedKeys = new Set(
+      [...root.querySelectorAll("details.field:not([open]) > summary")]
+        .map((s) => s.dataset.key || ""));
     root.textContent = "";
     renderAlerts();
     root.appendChild(identityCard());
@@ -853,6 +967,17 @@ window.Creator = (function () {
     const titles = ordered.map(([t]) => t);
     if (!titles.includes(activeTab)) activeTab = titles[0] || null;
     const missing = missingBySection();
+    // image-vs-chat tab marker (5.7 UI pass): a section holding at least one
+    // render group affects image generation and gets an accent dot; pure
+    // chat-side tabs say so in their tooltip. Computed over the whole
+    // catalog, not the visible subset — a tab's nature must not flip with
+    // conditional visibility. (The rendered free-text slot, signature_note,
+    // lives in Appearance, which is render-marked via its groups anyway.)
+    const renderSections = new Set();
+    for (const g of catalog.groups) {
+      if (g.render === false || g.field === "age") continue;
+      renderSections.add(g.region ? "Anatomy" : (g.section || "Options"));
+    }
     const strip = el("div", "tab-strip");
     strip.setAttribute("role", "tablist");
     for (const [title] of ordered) {
@@ -860,6 +985,12 @@ window.Creator = (function () {
       tab.type = "button";
       tab.dataset.title = title;
       tab.setAttribute("role", "tab");
+      if (renderSections.has(title)) {
+        tab.appendChild(el("span", "tab-render-dot"));
+        tab.title = "Choices here affect image renders";
+      } else {
+        tab.title = "Chat-side only — never enters image prompts";
+      }
       const n = missing.get(title) || 0;
       if (n) tab.appendChild(el("span", "tab-badge", String(n)));
       if (title === activeTab) tab.classList.add("active");
@@ -1284,8 +1415,11 @@ window.Creator = (function () {
     target.classList.add("bad");
     const panel = target.closest(".tab-panel");
     if (panel && panel.hidden) activateTab(panel.dataset.section); // 5.7 tabs
-    const region = target.closest("details");
-    if (region) region.open = true; // surface a fault in a collapsed region
+    // open every enclosing disclosure — the field's own box (5.7 UI pass)
+    // and, for anatomy, the region wrapping it — so the fault is visible
+    for (let d = target.closest("details"); d;
+         d = d.parentElement && d.parentElement.closest("details"))
+      d.open = true;
     target.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 

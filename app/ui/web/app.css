@@ -205,6 +205,35 @@ input[type="number"]:out-of-range { border-color: var(--blocked); }
 .grid2 { display: grid; grid-template-columns: 1fr 150px; gap: 14px; }
 
 .field-label { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+
+/* collapsible field boxes (5.7 UI pass): the summary carries the label and a
+   right-aligned readout of the current selection, so a collapsed box still
+   reads at a glance */
+details.field > summary.field-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+details.field > summary.field-label::-webkit-details-marker { display: none; }
+details.field > summary.field-label::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 10px;
+  margin-right: 3px;
+  flex: none;
+}
+details.field[open] > summary.field-label::before { content: "▾"; }
+.field-current {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--accent);
+  font-weight: 600;
+  text-align: right;
+}
+.field-current.none { color: var(--muted); font-weight: 400; }
 .field-hint {
   font-size: 11.5px;
   color: var(--muted);
@@ -528,6 +557,17 @@ button.ghost {
   line-height: 17px;
   text-align: center;
 }
+/* image-affecting tab marker (5.7 UI pass): tabs whose section feeds the
+   image prompt carry an accent dot; chat-only tabs explain in their tooltip */
+.tab-render-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
 .tab-panel > .fields { padding: 0; }
 
 /* segmented single-select (compact connected buttons for <=5 options) */
@@ -578,8 +618,16 @@ button.ghost {
   background: var(--bg);
   padding: 10px;
 }
-.picker-toolbar { display: flex; gap: 8px; align-items: stretch; }
-.picker-toolbar .picker-search { flex: 1; width: auto; }
+/* the toolbar owns the gap below itself; the search's own margin is zeroed
+   inside it, so the stretched sort button matches the search height exactly
+   (it used to stretch over the search's margin and sit taller, 5.7 UI pass) */
+.picker-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 10px;
+}
+.picker-toolbar .picker-search { flex: 1; width: auto; margin-bottom: 0; }
 .picker-sort {
   flex: none;
   padding: 7px 12px;
@@ -592,15 +640,33 @@ button.ghost {
   cursor: pointer;
 }
 .picker-sort:hover { border-color: var(--accent); color: var(--text); }
+/* collapsible subsection headers inside grouped pickers (5.7 UI pass) */
 .picker-group-head {
   grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   padding: 6px 2px 2px;
+  border: 0;
+  background: transparent;
   color: var(--muted);
+  font: inherit;
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: .04em;
   text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
 }
+.picker-group-head:hover { color: var(--text); }
+.picker-group-caret { font-size: 9px; flex: none; }
+.picker-group-count {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.picker-group-head:hover .picker-group-count { color: var(--text); }
 .picker-search {
   width: 100%;
   font: inherit;

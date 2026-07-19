@@ -144,6 +144,9 @@ def _group_payload(group: OptionGroup, image_resolver) -> dict:
         "section": group.section,
         "quick": group.quick,
         "required": group.required,
+        # 5.7 UI pass: the front-end marks image-affecting tabs, so it needs
+        # to know which groups feed the prompt (render:false = chat-side)
+        "render": group.render,
         "widget": derive_widget(group),
         "tier": group.tier,
         "visible_when": group.visible_when,

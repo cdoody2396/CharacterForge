@@ -677,8 +677,10 @@ def test_bundled_catalog_is_the_v2_tiered_conditional_shape():
     assert tiers["aesthetic"] == "P3"
     assert tiers["age"] is None                 # numeric stays untiered
     assert tiers["traits"] is None              # Subset C is 5.6d
+    # 5.7 UI pass: narrowed to the over-skin surface — on full_fur the
+    # always-visible skin_tone relabels to Fur Tone and carries the color
     assert catalog.get("fur_color").visible_when == {
-        "group": "skin_type", "in": ["fur_over_skin", "full_fur"]}  # 5.7
+        "group": "skin_type", "in": ["fur_over_skin"]}
     assert catalog.get("race").visible_when is None   # the root referent
     assert catalog.get("race").get_option("catfolk").classes == (
         "beastfolk", "beastfolk-mammal")
